@@ -25,7 +25,7 @@
 //!   Example: `MyVec3` with `Fixed([float, float, float])` expects `{1.0, 2.0, 3.0}`.
 
 use angelscript_core::list_buffer::ListPattern;
-use angelscript_core::{CompilationError, DataType, ListBehavior, Span, TypeHash};
+use angelscript_core::{CompilationError, DataType, ListBehavior, Span};
 use angelscript_parser::ast::{InitElement, InitListExpr};
 
 use super::{ExprCompiler, Result};
@@ -132,7 +132,8 @@ pub fn compile_init_list<'ast>(
 /// Get the list behavior (function + pattern) for a type.
 ///
 /// Returns the first list behavior, preferring factories over constructs.
-/// If the type is a template instance, substitutes template parameters in the pattern.
+/// Template parameter substitution in patterns is handled during template instantiation
+/// (see `instantiate_behaviors` in `template/instantiation.rs`).
 fn get_list_behavior(
     compiler: &ExprCompiler<'_, '_>,
     type_hash: angelscript_core::TypeHash,
@@ -160,7 +161,7 @@ fn get_list_behavior(
         })?;
 
     // Get the first list behavior (factories preferred over constructs)
-    let mut behavior = class
+    class
         .behaviors
         .list_behaviors()
         .first()
@@ -171,27 +172,7 @@ fn get_list_behavior(
                 type_entry.qualified_name()
             ),
             span,
-        })?;
-
-    // If this is a template instance, substitute template parameters in the pattern
-    if let Some(template_hash) = class.template
-        && !class.type_args.is_empty()
-        && let Some(template_entry) = compiler.ctx().get_type(template_hash)
-        && let Some(template_class) = template_entry.as_class()
-    {
-        // Build substitution map: template_params -> type_args
-        // Map from template param hash to concrete type hash
-        let param_map: Vec<(TypeHash, TypeHash)> = template_class
-            .template_params
-            .iter()
-            .zip(class.type_args.iter())
-            .map(|(param, arg)| (*param, arg.type_hash))
-            .collect();
-
-        behavior.pattern = behavior.pattern.substitute_types(&param_map);
-    }
-
-    Ok(behavior)
+        })
 }
 
 /// Compile a single element of an init list.
@@ -1012,12 +993,13 @@ mod tests {
         registry.register_type(array_template.into()).unwrap();
 
         // Create the template instance: array<int>
+        // Template instantiation substitutes T -> int in the pattern
         let array_int_hash = TypeHash::from_name("array<int>");
 
         let mut instance_behaviors = TypeBehaviors::new();
         instance_behaviors.add_list_factory(ListBehavior::new(
             list_factory_hash,
-            ListPattern::Repeat(t_param_hash), // Still has T, not int!
+            ListPattern::Repeat(primitives::INT32), // Substituted during instantiation: T -> int
         ));
 
         let mut array_int = ClassEntry::ffi("array<int>", TypeKind::reference());
@@ -1063,10 +1045,10 @@ mod tests {
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
         let result = compile_init_list(&mut compiler, &init_list_expr, Some(&expected_type));
 
-        // This should succeed because T is substituted with int
+        // This should succeed because template instantiation substituted T with int
         assert!(
             result.is_ok(),
-            "Template substitution should allow int elements: {:?}",
+            "Template instance should have substituted pattern: {:?}",
             result
         );
         let info = result.unwrap();
@@ -1097,12 +1079,13 @@ mod tests {
         registry.register_type(dict_template.into()).unwrap();
 
         // Create the template instance: dictionary<int, float>
+        // Template instantiation substitutes K -> int, V -> float in the pattern
         let dict_int_float_hash = TypeHash::from_name("dictionary<int,float>");
 
         let mut instance_behaviors = TypeBehaviors::new();
         instance_behaviors.add_list_factory(ListBehavior::new(
             list_factory_hash,
-            ListPattern::RepeatTuple(vec![k_param_hash, v_param_hash]), // Still has K, V
+            ListPattern::RepeatTuple(vec![primitives::INT32, primitives::FLOAT]), // Substituted: K -> int, V -> float
         ));
 
         let mut dict_int_float = ClassEntry::ffi("dictionary<int,float>", TypeKind::reference());

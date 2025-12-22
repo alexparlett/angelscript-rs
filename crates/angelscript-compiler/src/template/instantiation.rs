@@ -507,7 +507,8 @@ fn instantiate_method_for_type(
 /// Instantiate behavior functions for a template type instance.
 ///
 /// This updates the class's behaviors to use instantiated function hashes
-/// instead of the template's generic function hashes.
+/// instead of the template's generic function hashes. All behaviors are
+/// instantiated to ensure their object type matches the instance type.
 fn instantiate_behaviors(
     template_behaviors: &TypeBehaviors,
     subst_map: &super::substitution::SubstitutionMap,
@@ -516,8 +517,15 @@ fn instantiate_behaviors(
     registry: &mut SymbolRegistry,
     global_registry: &SymbolRegistry,
 ) -> Result<(), CompilationError> {
-    // Helper to instantiate a single function hash
-    let mut instantiate_func = |func_hash: TypeHash| -> Result<TypeHash, CompilationError> {
+    // Helper function to instantiate a single function hash
+    fn instantiate_func(
+        func_hash: TypeHash,
+        subst_map: &super::substitution::SubstitutionMap,
+        instance_hash: TypeHash,
+        span: Span,
+        registry: &mut SymbolRegistry,
+        global_registry: &SymbolRegistry,
+    ) -> Result<TypeHash, CompilationError> {
         let func = registry
             .get_function(func_hash)
             .or_else(|| global_registry.get_function(func_hash));
@@ -540,32 +548,124 @@ fn instantiate_behaviors(
             // Function not found - this shouldn't happen for valid templates
             Ok(func_hash)
         }
-    };
+    }
+
+    // Helper function to instantiate an optional function hash
+    fn instantiate_optional(
+        opt_hash: Option<TypeHash>,
+        subst_map: &super::substitution::SubstitutionMap,
+        instance_hash: TypeHash,
+        span: Span,
+        registry: &mut SymbolRegistry,
+        global_registry: &SymbolRegistry,
+    ) -> Result<Option<TypeHash>, CompilationError> {
+        match opt_hash {
+            Some(hash) => Ok(Some(instantiate_func(
+                hash,
+                subst_map,
+                instance_hash,
+                span,
+                registry,
+                global_registry,
+            )?)),
+            None => Ok(None),
+        }
+    }
 
     // Instantiate factories
     let mut inst_factories = Vec::with_capacity(template_behaviors.factories.len());
     for &factory_hash in &template_behaviors.factories {
-        inst_factories.push(instantiate_func(factory_hash)?);
+        inst_factories.push(instantiate_func(
+            factory_hash,
+            subst_map,
+            instance_hash,
+            span,
+            registry,
+            global_registry,
+        )?);
     }
 
     // Instantiate constructors
     let mut inst_constructors = Vec::with_capacity(template_behaviors.constructors.len());
     for &ctor_hash in &template_behaviors.constructors {
-        inst_constructors.push(instantiate_func(ctor_hash)?);
+        inst_constructors.push(instantiate_func(
+            ctor_hash,
+            subst_map,
+            instance_hash,
+            span,
+            registry,
+            global_registry,
+        )?);
     }
+
+    // Instantiate destructor
+    let inst_destructor = instantiate_optional(
+        template_behaviors.destructor,
+        subst_map,
+        instance_hash,
+        span,
+        registry,
+        global_registry,
+    )?;
+
+    // Instantiate reference counting behaviors
+    let inst_addref = instantiate_optional(
+        template_behaviors.addref,
+        subst_map,
+        instance_hash,
+        span,
+        registry,
+        global_registry,
+    )?;
+    let inst_release = instantiate_optional(
+        template_behaviors.release,
+        subst_map,
+        instance_hash,
+        span,
+        registry,
+        global_registry,
+    )?;
+
+    // Instantiate weak reference support
+    let inst_get_weakref_flag = instantiate_optional(
+        template_behaviors.get_weakref_flag,
+        subst_map,
+        instance_hash,
+        span,
+        registry,
+        global_registry,
+    )?;
 
     // Instantiate list factories
     let mut inst_list_factories = Vec::with_capacity(template_behaviors.list_factories.len());
     for list_behavior in &template_behaviors.list_factories {
-        let inst_hash = instantiate_func(list_behavior.func_hash)?;
-        inst_list_factories.push(ListBehavior::new(inst_hash, list_behavior.pattern.clone()));
+        let inst_hash = instantiate_func(
+            list_behavior.func_hash,
+            subst_map,
+            instance_hash,
+            span,
+            registry,
+            global_registry,
+        )?;
+        let inst_pattern =
+            super::substitution::substitute_list_pattern(&list_behavior.pattern, subst_map);
+        inst_list_factories.push(ListBehavior::new(inst_hash, inst_pattern));
     }
 
     // Instantiate list constructs
     let mut inst_list_constructs = Vec::with_capacity(template_behaviors.list_constructs.len());
     for list_behavior in &template_behaviors.list_constructs {
-        let inst_hash = instantiate_func(list_behavior.func_hash)?;
-        inst_list_constructs.push(ListBehavior::new(inst_hash, list_behavior.pattern.clone()));
+        let inst_hash = instantiate_func(
+            list_behavior.func_hash,
+            subst_map,
+            instance_hash,
+            span,
+            registry,
+            global_registry,
+        )?;
+        let inst_pattern =
+            super::substitution::substitute_list_pattern(&list_behavior.pattern, subst_map);
+        inst_list_constructs.push(ListBehavior::new(inst_hash, inst_pattern));
     }
 
     // Instantiate operators
@@ -573,7 +673,14 @@ fn instantiate_behaviors(
     for (op_behavior, func_hashes) in &template_behaviors.operators {
         let mut inst_hashes = Vec::with_capacity(func_hashes.len());
         for &func_hash in func_hashes {
-            inst_hashes.push(instantiate_func(func_hash)?);
+            inst_hashes.push(instantiate_func(
+                func_hash,
+                subst_map,
+                instance_hash,
+                span,
+                registry,
+                global_registry,
+            )?);
         }
         inst_operators.insert(*op_behavior, inst_hashes);
     }
@@ -584,12 +691,15 @@ fn instantiate_behaviors(
     {
         class.behaviors.factories = inst_factories;
         class.behaviors.constructors = inst_constructors;
+        class.behaviors.destructor = inst_destructor;
+        class.behaviors.addref = inst_addref;
+        class.behaviors.release = inst_release;
+        class.behaviors.get_weakref_flag = inst_get_weakref_flag;
         class.behaviors.list_factories = inst_list_factories;
         class.behaviors.list_constructs = inst_list_constructs;
         class.behaviors.operators = inst_operators;
-        // Note: destructor, addref, release, get_weakref_flag, and template_callback
-        // don't take template parameters, so they don't need instantiation.
-        // They were already copied from the template.
+        // Note: template_callback is not instantiated - it's the callback that validates
+        // instantiation and is called BEFORE we reach this point.
     }
 
     Ok(())

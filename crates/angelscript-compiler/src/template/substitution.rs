@@ -2,6 +2,7 @@
 //!
 //! Provides functions to substitute template parameters with concrete types.
 
+use angelscript_core::list_buffer::ListPattern;
 use angelscript_core::{CompilationError, DataType, Param, Span, TypeHash};
 use rustc_hash::FxHashMap;
 
@@ -109,6 +110,29 @@ pub fn substitute_type_with_handle_const(
         }
     } else {
         data_type
+    }
+}
+
+/// Substitute template parameter hashes in a list pattern.
+///
+/// Replaces template parameter type hashes with their concrete type hashes
+/// from the substitution map. Used during template specialization.
+///
+/// # Example
+///
+/// For `array<T>` with `ListPattern::Repeat(T)`, when instantiating `array<int>`,
+/// this function returns `ListPattern::Repeat(int)`.
+pub fn substitute_list_pattern(pattern: &ListPattern, subst_map: &SubstitutionMap) -> ListPattern {
+    let substitute = |hash: &TypeHash| -> TypeHash {
+        subst_map.get(hash).map(|dt| dt.type_hash).unwrap_or(*hash)
+    };
+
+    match pattern {
+        ListPattern::Repeat(hash) => ListPattern::Repeat(substitute(hash)),
+        ListPattern::Fixed(hashes) => ListPattern::Fixed(hashes.iter().map(substitute).collect()),
+        ListPattern::RepeatTuple(hashes) => {
+            ListPattern::RepeatTuple(hashes.iter().map(substitute).collect())
+        }
     }
 }
 
@@ -375,5 +399,99 @@ mod tests {
 
         assert!(result.is_handle);
         assert!(!result.is_handle_to_const);
+    }
+
+    // ListPattern substitution tests
+
+    #[test]
+    fn substitute_list_pattern_repeat() {
+        let t_hash = make_template_param("array::T");
+        let int_type = DataType::simple(primitives::INT32);
+
+        let mut map = SubstitutionMap::default();
+        map.insert(t_hash, int_type);
+
+        let pattern = ListPattern::Repeat(t_hash);
+        let result = substitute_list_pattern(&pattern, &map);
+
+        assert_eq!(result, ListPattern::Repeat(primitives::INT32));
+    }
+
+    #[test]
+    fn substitute_list_pattern_repeat_tuple() {
+        let k_hash = make_template_param("dict::K");
+        let v_hash = make_template_param("dict::V");
+        let string_type = DataType::simple(primitives::STRING);
+        let int_type = DataType::simple(primitives::INT32);
+
+        let mut map = SubstitutionMap::default();
+        map.insert(k_hash, string_type);
+        map.insert(v_hash, int_type);
+
+        let pattern = ListPattern::RepeatTuple(vec![k_hash, v_hash]);
+        let result = substitute_list_pattern(&pattern, &map);
+
+        assert_eq!(
+            result,
+            ListPattern::RepeatTuple(vec![primitives::STRING, primitives::INT32])
+        );
+    }
+
+    #[test]
+    fn substitute_list_pattern_fixed() {
+        let t_hash = make_template_param("MyStruct::T");
+        let int_type = DataType::simple(primitives::INT32);
+
+        let mut map = SubstitutionMap::default();
+        map.insert(t_hash, int_type);
+
+        // Fixed pattern with mix of template and concrete types
+        let pattern = ListPattern::Fixed(vec![primitives::STRING, t_hash, primitives::STRING]);
+        let result = substitute_list_pattern(&pattern, &map);
+
+        assert_eq!(
+            result,
+            ListPattern::Fixed(vec![
+                primitives::STRING,
+                primitives::INT32,
+                primitives::STRING
+            ])
+        );
+    }
+
+    #[test]
+    fn substitute_list_pattern_preserves_non_template_types() {
+        let t_hash = make_template_param("array::T");
+        let int_type = DataType::simple(primitives::INT32);
+
+        let mut map = SubstitutionMap::default();
+        map.insert(t_hash, int_type);
+
+        // Pattern with concrete type that shouldn't be substituted
+        let pattern = ListPattern::Fixed(vec![primitives::STRING, t_hash]);
+        let result = substitute_list_pattern(&pattern, &map);
+
+        // string should be preserved
+        assert_eq!(
+            result,
+            ListPattern::Fixed(vec![primitives::STRING, primitives::INT32])
+        );
+    }
+
+    #[test]
+    fn substitute_list_pattern_no_matches() {
+        let t_hash = make_template_param("array::T");
+        let u_hash = make_template_param("array::U");
+        let int_type = DataType::simple(primitives::INT32);
+
+        let mut map = SubstitutionMap::default();
+        map.insert(u_hash, int_type);
+
+        // Pattern uses T but substitution is for U
+        let pattern = ListPattern::Repeat(t_hash);
+        let result = substitute_list_pattern(&pattern, &map);
+
+        // Should preserve original
+        assert_eq!(result, ListPattern::Repeat(t_hash));
     }
 }

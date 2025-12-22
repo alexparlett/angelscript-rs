@@ -285,45 +285,6 @@ impl ListPattern {
             }
         }
     }
-
-    /// Substitute template parameter hashes with concrete types.
-    ///
-    /// `param_map` maps template param hashes (e.g., `array::T`) to concrete type hashes.
-    /// Used during template specialization to convert patterns like `Repeat(array::T)`
-    /// to `Repeat(int)` when instantiating `array<int>`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use angelscript_core::{ListPattern, TypeHash};
-    ///
-    /// let t_hash = TypeHash::from_name("array::T");
-    /// let int_hash = TypeHash::from_name("int");
-    /// let pattern = ListPattern::Repeat(t_hash);
-    ///
-    /// let substituted = pattern.substitute_types(&[(t_hash, int_hash)]);
-    /// assert_eq!(substituted, ListPattern::Repeat(int_hash));
-    /// ```
-    #[must_use]
-    pub fn substitute_types(&self, param_map: &[(TypeHash, TypeHash)]) -> Self {
-        let substitute = |hash: &TypeHash| -> TypeHash {
-            param_map
-                .iter()
-                .find(|(from, _)| from == hash)
-                .map(|(_, to)| *to)
-                .unwrap_or(*hash)
-        };
-
-        match self {
-            ListPattern::Repeat(hash) => ListPattern::Repeat(substitute(hash)),
-            ListPattern::Fixed(hashes) => {
-                ListPattern::Fixed(hashes.iter().map(substitute).collect())
-            }
-            ListPattern::RepeatTuple(hashes) => {
-                ListPattern::RepeatTuple(hashes.iter().map(substitute).collect())
-            }
-        }
-    }
 }
 
 impl From<ListPatternMeta> for ListPattern {
@@ -618,77 +579,6 @@ mod tests {
         let tuple =
             ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]);
         assert!(matches!(tuple, ListPattern::RepeatTuple(ref v) if v.len() == 2));
-    }
-
-    // substitute_types tests
-    #[test]
-    fn test_substitute_repeat_pattern() {
-        let t_hash = TypeHash::from_name("array::T");
-        let int_hash = primitive_hashes::INT32;
-        let pattern = ListPattern::Repeat(t_hash);
-
-        let substituted = pattern.substitute_types(&[(t_hash, int_hash)]);
-        assert_eq!(substituted, ListPattern::Repeat(int_hash));
-    }
-
-    #[test]
-    fn test_substitute_repeat_tuple_pattern() {
-        let k_hash = TypeHash::from_name("dict::K");
-        let v_hash = TypeHash::from_name("dict::V");
-        let string_hash = primitive_hashes::STRING;
-        let int_hash = primitive_hashes::INT32;
-
-        let pattern = ListPattern::RepeatTuple(vec![k_hash, v_hash]);
-        let substituted = pattern.substitute_types(&[(k_hash, string_hash), (v_hash, int_hash)]);
-
-        assert_eq!(
-            substituted,
-            ListPattern::RepeatTuple(vec![string_hash, int_hash])
-        );
-    }
-
-    #[test]
-    fn test_substitute_fixed_pattern() {
-        let t_hash = TypeHash::from_name("MyStruct::T");
-        let int_hash = primitive_hashes::INT32;
-        let string_hash = primitive_hashes::STRING;
-
-        // Fixed pattern with mix of template and concrete types
-        let pattern = ListPattern::Fixed(vec![string_hash, t_hash, string_hash]);
-        let substituted = pattern.substitute_types(&[(t_hash, int_hash)]);
-
-        assert_eq!(
-            substituted,
-            ListPattern::Fixed(vec![string_hash, int_hash, string_hash])
-        );
-    }
-
-    #[test]
-    fn test_substitute_preserves_non_template_types() {
-        let t_hash = TypeHash::from_name("array::T");
-        let int_hash = primitive_hashes::INT32;
-        let string_hash = primitive_hashes::STRING;
-
-        // Pattern with concrete type that shouldn't be substituted
-        let pattern = ListPattern::Fixed(vec![string_hash, t_hash]);
-        let substituted = pattern.substitute_types(&[(t_hash, int_hash)]);
-
-        // string_hash should be preserved
-        assert_eq!(substituted, ListPattern::Fixed(vec![string_hash, int_hash]));
-    }
-
-    #[test]
-    fn test_substitute_no_matches() {
-        let t_hash = TypeHash::from_name("array::T");
-        let u_hash = TypeHash::from_name("array::U");
-        let int_hash = primitive_hashes::INT32;
-
-        // Pattern uses T but substitution is for U
-        let pattern = ListPattern::Repeat(t_hash);
-        let substituted = pattern.substitute_types(&[(u_hash, int_hash)]);
-
-        // Should preserve original
-        assert_eq!(substituted, ListPattern::Repeat(t_hash));
     }
 
     // From<ListPatternMeta> tests
