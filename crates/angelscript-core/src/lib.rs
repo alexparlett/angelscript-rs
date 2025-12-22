@@ -91,6 +91,7 @@ mod span;
 mod type_def;
 pub mod type_hash;
 mod unresolved;
+mod unresolved_entries;
 
 // New types for unified type registry
 mod any;
@@ -121,6 +122,14 @@ pub use qualified_name::QualifiedName;
 
 // Unresolved types for registration pass
 pub use unresolved::{UnresolvedParam, UnresolvedSignature, UnresolvedType};
+
+// Unresolved entry types for Pass 1 output
+pub use unresolved_entries::{
+    MethodKind, UnresolvedAccessor, UnresolvedClass, UnresolvedEnum, UnresolvedEnumValue,
+    UnresolvedField, UnresolvedFuncdef, UnresolvedFunction, UnresolvedGlobal,
+    UnresolvedInheritance, UnresolvedInterface, UnresolvedMethod, UnresolvedMixin,
+    UnresolvedVirtualProperty,
+};
 
 // Operators
 pub use ops::{BinaryOp, UnaryOp};
