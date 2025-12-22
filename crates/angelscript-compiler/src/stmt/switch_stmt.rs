@@ -83,7 +83,7 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
                     expr_compiler.check(value, &switch_info.data_type)?;
 
                     // Emit equality check
-                    self.emit_equality(&switch_info.data_type, equals_method)?;
+                    self.emit_equality(&switch_info.data_type, equals_method, value.span())?;
 
                     // Jump to case body if equal
                     let jump = self.emitter.emit_jump(OpCode::JumpIfTrue);
@@ -149,6 +149,11 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     ) -> Result<Option<angelscript_core::TypeHash>> {
         // Primitives are always valid
         if data_type.is_primitive() {
+            return Ok(None);
+        }
+
+        // Enums are ints under the hood, so they're also valid for switch
+        if data_type.is_enum {
             return Ok(None);
         }
 
@@ -260,19 +265,24 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
         &mut self,
         data_type: &DataType,
         equals_method: Option<angelscript_core::TypeHash>,
+        span: Span,
     ) -> Result<()> {
-        if data_type.is_primitive() {
+        if data_type.is_primitive() || data_type.is_enum {
             // Use generic equality opcode - VM determines types from stack values
+            // Enums are ints under the hood, so they use the same opcode
             self.emitter.emit(OpCode::Eq);
         } else {
             // Call opEquals method
             if let Some(method) = equals_method {
                 self.emitter.emit_call_method(method, 1);
             } else {
-                return Err(CompilationError::Other {
-                    message: "type does not support equality comparison".to_string(),
-                    span: angelscript_core::Span::default(),
-                });
+                let type_name = self
+                    .ctx
+                    .get_type(data_type.type_hash)
+                    .map(|t| t.qualified_name().to_string())
+                    .unwrap_or_else(|| format!("{:?}", data_type.type_hash));
+
+                return Err(CompilationError::InvalidSwitchType { type_name, span });
             }
         }
         Ok(())

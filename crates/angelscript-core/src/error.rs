@@ -805,6 +805,15 @@ pub enum CompilationError {
         /// Where the parameter was declared.
         span: Span,
     },
+
+    /// Type cannot be used in switch statement (missing opEquals).
+    #[error("at {span}: type '{type_name}' cannot be used in switch statement (missing opEquals)")]
+    InvalidSwitchType {
+        /// The type name.
+        type_name: String,
+        /// Where the switch expression occurred.
+        span: Span,
+    },
 }
 
 impl CompilationError {
@@ -841,6 +850,7 @@ impl CompilationError {
             CompilationError::NoBaseDefaultConstructor { span, .. } => *span,
             CompilationError::InvalidHandleType { span, .. } => *span,
             CompilationError::InvalidParameterType { span, .. } => *span,
+            CompilationError::InvalidSwitchType { span, .. } => *span,
         }
     }
 }

@@ -34,8 +34,27 @@ void useEnums() {
     Difficulty d = Difficulty::Hard;
     Flags f = Flags::Flag1 | Flags::Flag2;
     Status s = Status::Running;
-    
+
     if (c == Color::Red) {
         print("Red color");
+    }
+}
+
+void switchOnEnum() {
+    Color c = Color::Green;
+
+    switch (c) {
+        case Color::Red:
+            print("red");
+            break;
+        case Color::Green:
+            print("green");
+            break;
+        case Color::Blue:
+            print("blue");
+            break;
+        default:
+            print("unknown");
+            break;
     }
 }
