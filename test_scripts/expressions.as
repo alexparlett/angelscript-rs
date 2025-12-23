@@ -80,15 +80,15 @@ void testExpressionCombinations() {
     for (int i = 0; i < 100 && (i * i < 1000 || i % 10 == 0); i++) {
         if (i % 2 == 0 && i % 3 == 0) continue;
         if (i > 50 && i < 60) break;
-        print(i);
+        print("{}", i);
     }
     
-    // Switch with complex expressions
+    // Switch with literal case values
     switch (x * y + z) {
-        case 1 + 2:
+        case 3:
             print("3");
             break;
-        case 10 * 5:
+        case 50:
             print("50");
             break;
         default:

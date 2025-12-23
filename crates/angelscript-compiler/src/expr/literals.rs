@@ -10,7 +10,7 @@ use crate::expr_info::ExprInfo;
 
 /// Compile a literal expression.
 pub fn compile_literal(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     kind: &LiteralKind,
     span: Span,
 ) -> Result<ExprInfo> {
@@ -24,7 +24,7 @@ pub fn compile_literal(
     }
 }
 
-fn compile_int(compiler: &mut ExprCompiler<'_, '_, '_>, value: i64) -> Result<ExprInfo> {
+fn compile_int(compiler: &mut ExprCompiler<'_, '_>, value: i64) -> Result<ExprInfo> {
     // All integer literals are emitted as int64, VM handles narrowing
     compiler.emitter().emit_int(value);
 
@@ -38,23 +38,23 @@ fn compile_int(compiler: &mut ExprCompiler<'_, '_, '_>, value: i64) -> Result<Ex
     Ok(ExprInfo::rvalue(DataType::simple(type_hash)))
 }
 
-fn compile_float(compiler: &mut ExprCompiler<'_, '_, '_>, value: f32) -> Result<ExprInfo> {
+fn compile_float(compiler: &mut ExprCompiler<'_, '_>, value: f32) -> Result<ExprInfo> {
     compiler.emitter().emit_f32(value);
     Ok(ExprInfo::rvalue(DataType::simple(primitives::FLOAT)))
 }
 
-fn compile_double(compiler: &mut ExprCompiler<'_, '_, '_>, value: f64) -> Result<ExprInfo> {
+fn compile_double(compiler: &mut ExprCompiler<'_, '_>, value: f64) -> Result<ExprInfo> {
     compiler.emitter().emit_f64(value);
     Ok(ExprInfo::rvalue(DataType::simple(primitives::DOUBLE)))
 }
 
-fn compile_bool(compiler: &mut ExprCompiler<'_, '_, '_>, value: bool) -> Result<ExprInfo> {
+fn compile_bool(compiler: &mut ExprCompiler<'_, '_>, value: bool) -> Result<ExprInfo> {
     compiler.emitter().emit_bool(value);
     Ok(ExprInfo::rvalue(DataType::simple(primitives::BOOL)))
 }
 
 fn compile_string(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     bytes: &[u8],
     span: Span,
 ) -> Result<ExprInfo> {
@@ -70,7 +70,7 @@ fn compile_string(
     Ok(ExprInfo::rvalue(DataType::simple(string_type)))
 }
 
-fn compile_null(compiler: &mut ExprCompiler<'_, '_, '_>) -> Result<ExprInfo> {
+fn compile_null(compiler: &mut ExprCompiler<'_, '_>) -> Result<ExprInfo> {
     compiler.emitter().emit_null();
     // Null has a special "null handle" type that can convert to any handle type
     Ok(ExprInfo::rvalue(DataType::simple(primitives::NULL)))
@@ -84,10 +84,10 @@ mod tests {
     use crate::emit::BytecodeEmitter;
     use angelscript_registry::SymbolRegistry;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -97,7 +97,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
 
@@ -114,7 +115,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
 
@@ -131,7 +133,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
 
@@ -147,7 +150,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
 
@@ -163,7 +167,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
 
@@ -172,7 +177,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
     }
 
@@ -182,14 +187,15 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
 
         let result = compile_bool(&mut compiler, false);
         assert!(result.is_ok());
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.read_op(0), Some(OpCode::PushFalse));
     }
 
@@ -199,7 +205,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
 
@@ -208,7 +215,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::NULL);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.read_op(0), Some(OpCode::PushNull));
     }
 }

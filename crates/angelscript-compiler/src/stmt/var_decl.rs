@@ -14,7 +14,7 @@ use crate::type_resolver::TypeResolver;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a variable declaration statement.
     ///
     /// Supports multiple declarators, auto type inference, and default initialization.
@@ -67,8 +67,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 
                 // For handles, AddRef before storing (we Release on scope exit)
                 if var_type.is_handle {
-                    let addref_hash = self.get_addref_behavior(var_type.type_hash, var.span)?;
-                    self.emitter.emit_add_ref(addref_hash);
+                    self.emitter.emit_add_ref();
                 }
 
                 // Store the result in the local slot
@@ -121,26 +120,37 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                 self.emitter.emit_set_local(slot);
                 Ok(())
             } else if let Some(class) = type_entry.as_class() {
-                // Value type - call default constructor
-                if class.behaviors.constructors.is_empty() {
+                // Determine if we use constructors or factories based on type kind
+                let (candidates, uses_constructors) = if class.type_kind.uses_constructors() {
+                    (&class.behaviors.constructors, true)
+                } else if class.type_kind.uses_factories() {
+                    (&class.behaviors.factories, false)
+                } else {
                     return Err(CompilationError::Other {
                         message: format!(
-                            "type '{}' has no default constructor",
+                            "type '{}' cannot be default-initialized",
                             type_entry.qualified_name()
                         ),
                         span,
                     });
+                };
+
+                if candidates.is_empty() {
+                    return Err(CompilationError::NoDefaultConstructor {
+                        type_name: type_entry.qualified_name().to_string(),
+                        span,
+                    });
                 }
 
-                // Resolve default constructor (0 args) via overload resolution
-                let overload = crate::overload::resolve_overload(
-                    &class.behaviors.constructors,
-                    &[],
-                    self.ctx,
-                    span,
-                )?;
+                // Resolve default constructor/factory (0 args) via overload resolution
+                let overload = crate::overload::resolve_overload(candidates, &[], self.ctx, span)?;
 
-                self.emitter.emit_new(type_hash, overload.func_hash, 0);
+                if uses_constructors {
+                    self.emitter.emit_new(type_hash, overload.func_hash, 0);
+                } else {
+                    // Reference type - call factory
+                    self.emitter.emit_new_factory(overload.func_hash, 0);
+                }
                 self.emitter.emit_set_local(slot);
                 Ok(())
             } else {
@@ -181,7 +191,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // int x = 42;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -212,7 +223,7 @@ mod tests {
         assert!(var.unwrap().is_initialized);
 
         // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_byte(1), Some(0)); // Constant pool index
@@ -228,7 +239,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // int x;
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -252,7 +264,7 @@ mod tests {
         assert!(var.unwrap().is_initialized);
 
         // Bytecode: PushZero(1) + SetLocal(2) = 3 bytes (default init to 0)
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 3);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushZero));
         assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
@@ -267,7 +279,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // int x = 1, y = 2;
         let init1 = arena.alloc(Expr::Literal(LiteralExpr {
@@ -313,7 +326,7 @@ mod tests {
         // Bytecode: x=1 uses PushOne(1) + SetLocal(2) = 3 bytes
         //           y=2 uses Constant(2) + SetLocal(2) = 4 bytes
         // Total: 7 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 7);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushOne));
         assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
@@ -332,7 +345,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // auto x = 42;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -362,7 +376,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, primitives::INT32);
 
         // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
@@ -374,7 +388,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // auto x; - should error
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -412,7 +427,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // const int x = 42;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -444,7 +460,7 @@ mod tests {
         assert!(var.unwrap().is_const);
 
         // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
@@ -456,7 +472,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // First declaration: int x = 1;
         let init1 = arena.alloc(Expr::Literal(LiteralExpr {
@@ -512,7 +529,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // float x = 3.5;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -541,7 +559,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, primitives::FLOAT);
 
         // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
@@ -555,7 +573,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // bool x = true;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -584,7 +603,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, primitives::BOOL);
 
         // Bytecode: PushTrue(1) + SetLocal(2) = 3 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 3);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
         assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
@@ -612,7 +631,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Color c; (should initialize to Red = 5)
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -643,7 +663,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, color_hash);
 
         // Bytecode: Constant(2, value=5) + SetLocal(2) = 4 bytes (5 is not 0 or 1)
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
@@ -685,7 +705,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Vec2 v; (should call default constructor)
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -716,7 +737,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, vec2_hash);
 
         // Should emit New for the constructor
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         chunk.assert_contains_opcodes(&[OpCode::New]);
     }
 
@@ -737,7 +758,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Vec2 v; (should error - no default constructor)
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -762,16 +784,13 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
         let result = compiler.compile_var_decl(&decl);
-        match result.unwrap_err() {
-            CompilationError::Other { message, .. } => {
-                assert!(
-                    message.contains("no default constructor"),
-                    "Expected error about missing default constructor, got: {}",
-                    message
-                );
-            }
-            other => panic!("Expected CompilationError::Other, got: {:?}", other),
-        }
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                CompilationError::NoDefaultConstructor { .. }
+            ),
+            "Expected NoDefaultConstructor error"
+        );
     }
 
     #[test]
@@ -793,7 +812,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Foo@ f = null; (handle with initializer should emit AddRef)
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -831,7 +851,7 @@ mod tests {
             .expect("Handle variable declaration should succeed");
 
         // Verify AddRef was emitted by checking bytecode
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         chunk.assert_contains_opcodes(&[OpCode::AddRef]);
     }
 
@@ -852,7 +872,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Foo@ f; (default init to null - no AddRef needed for null)
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -883,7 +904,7 @@ mod tests {
         assert!(compiler.compile_var_decl(&decl).is_ok());
 
         // Verify NO AddRef was emitted (null doesn't need AddRef)
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         let mut found_addref = false;
         for i in 0..chunk.len() {
             if chunk.read_op(i) == Some(OpCode::AddRef) {

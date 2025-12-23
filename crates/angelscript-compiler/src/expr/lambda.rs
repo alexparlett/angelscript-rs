@@ -18,18 +18,17 @@
 //! Compilation fails when parameters are untyped and:
 //! - No expected type is available
 //! - Multiple funcdef overloads could match
-//!
-//! ## Implementation Status
-//!
-//! Lambda body compilation requires statement compilation (Task 44).
-//! Currently, parameter type validation is complete but body compilation
-//! returns a "not yet implemented" error.
 
 use angelscript_core::{CompilationError, DataType, TypeHash};
 use angelscript_parser::ast::LambdaExpr;
 
 use super::{ExprCompiler, Result};
+use crate::bytecode::OpCode;
+use crate::context::CompilationContext;
+use crate::emit::BytecodeEmitter;
 use crate::expr_info::ExprInfo;
+use crate::return_checker::ReturnChecker;
+use crate::stmt::StmtCompiler;
 use crate::type_resolver::TypeResolver;
 
 /// Compile a lambda expression: `function(params) { body }`
@@ -46,7 +45,7 @@ use crate::type_resolver::TypeResolver;
 /// * `Ok(ExprInfo)` - Function pointer to the compiled lambda
 /// * `Err(CompilationError)` - If types cannot be inferred or body has errors
 pub fn compile_lambda<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &LambdaExpr<'ast>,
     expected: Option<&DataType>,
 ) -> Result<ExprInfo> {
@@ -100,60 +99,116 @@ pub fn compile_lambda<'ast>(
         DataType::void()
     };
 
-    // 5. Determine the result funcdef type
+    // 5. Generate lambda hash and name
+    let lambda_hash =
+        TypeHash::from_name(&generate_lambda_funcdef_name(&param_types, &return_type));
+    let lambda_name = format!("$lambda_{:x}", lambda_hash.as_u64());
+
+    // 6. Determine the result funcdef type
     let result_type = if let Some(expected) = expected {
         // Use the expected type if it's a funcdef
         *expected
     } else {
-        // Would need to create an anonymous funcdef type
-        // For now, just use void as placeholder
-        DataType::void()
+        // Use the generated lambda hash for anonymous funcdefs
+        DataType::simple(lambda_hash)
     };
 
-    // NOTE: Body compilation requires statement compilation infrastructure (Task 44).
-    // At this point we have validated:
-    // - Parameter types can be resolved (explicit or inferred)
-    // - Parameter count matches expected funcdef
-    // - Return type is known
-    //
-    // What remains for full implementation:
-    // 1. Create isolated scope for lambda body (no access to outer variables)
-    // 2. Declare parameters in lambda scope
-    // 3. Compile body statements
-    // 4. Generate function entry and emit function pointer
+    // 7. Compile the lambda body using inner references
+    // We need to access ctx and emitter separately to avoid double-borrow
+    compile_lambda_body(
+        compiler.ctx,
+        compiler.emitter,
+        expr,
+        &param_types,
+        return_type,
+        lambda_hash,
+        lambda_name,
+        span,
+    )?;
 
-    // For empty body lambdas with fully-typed params, we could theoretically succeed
-    // but statement compilation is needed for any real lambda
-    if !expr.body.stmts.is_empty() {
+    Ok(ExprInfo::rvalue(result_type))
+}
+
+/// Compile the lambda body with proper scope and bytecode generation.
+///
+/// This is a separate function to work around borrow checker limitations
+/// when accessing both ctx and emitter from ExprCompiler.
+#[allow(clippy::too_many_arguments)]
+fn compile_lambda_body<'ast>(
+    ctx: &mut CompilationContext<'_>,
+    emitter: &mut BytecodeEmitter,
+    expr: &LambdaExpr<'ast>,
+    param_types: &[DataType],
+    return_type: DataType,
+    lambda_hash: TypeHash,
+    lambda_name: String,
+    span: angelscript_core::Span,
+) -> Result<()> {
+    // Start new chunk for lambda body (parent chunk stays on stack)
+    emitter.start_chunk();
+
+    // Start lambda's isolated scope (pushed onto scope stack)
+    ctx.begin_function();
+
+    // Declare parameters in lambda scope
+    for (i, (param, ty)) in expr.params.iter().zip(param_types).enumerate() {
+        let name = param
+            .name
+            .map(|n| n.name.to_string())
+            .unwrap_or_else(|| format!("_{}", i));
+        ctx.declare_param(name, *ty, ty.is_const, param.span)?;
+    }
+
+    // Compile lambda body
+    {
+        let mut stmt_compiler = StmtCompiler::new(
+            ctx,
+            emitter,
+            return_type,
+            None, // No 'this' in lambdas
+        );
+        for stmt in expr.body.stmts {
+            stmt_compiler.compile(stmt)?;
+        }
+    }
+
+    // Check if we need implicit return
+    let has_explicit_return = {
+        let checker = ReturnChecker::new();
+        checker.all_paths_return(emitter.chunk())
+    };
+
+    // Add implicit return for void lambdas without explicit return
+    if return_type.is_void() && !has_explicit_return {
+        emitter.emit(OpCode::ReturnVoid);
+    }
+
+    // Verify non-void lambdas have returns on all paths
+    if !return_type.is_void() && !has_explicit_return {
+        // Clean up before returning error
+        emitter.finish_chunk(); // Discard lambda chunk
+        ctx.end_function(); // Pop lambda scope
         return Err(CompilationError::Other {
-            message: "lambda body compilation requires statement compilation (Task 44)".to_string(),
+            message: "not all code paths return a value in lambda".to_string(),
             span,
         });
     }
 
-    // Empty lambda body - can succeed if we have a valid result type
-    if funcdef.is_some() {
-        // Use provided return_type and param_types to validate compatibility
-        // (already done above)
-        Ok(ExprInfo::rvalue(result_type))
-    } else if all_params_typed(expr) {
-        // All params explicitly typed, empty body
-        // Would need to create anonymous funcdef - for now return a simple type with the lambda hash
-        // A proper implementation would register the funcdef
-        let lambda_hash =
-            TypeHash::from_name(&generate_lambda_funcdef_name(&param_types, &return_type));
-        Ok(ExprInfo::rvalue(DataType::simple(lambda_hash)))
-    } else {
-        Err(CompilationError::Other {
-            message: "lambda body compilation requires statement compilation (Task 44)".to_string(),
-            span,
-        })
-    }
+    // End lambda scope (pop from scope stack)
+    ctx.end_function();
+
+    // Register the compiled lambda
+    emitter.finish_function(lambda_hash, lambda_name);
+
+    // Emit FuncPtr in parent's chunk (now current again)
+    emitter.emit_func_ptr(lambda_hash);
+
+    Ok(())
 }
 
 /// Resolve parameter types from explicit types or expected funcdef.
 fn resolve_param_types(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &LambdaExpr<'_>,
     funcdef: Option<&angelscript_core::entries::FuncdefEntry>,
 ) -> Result<Vec<DataType>> {
@@ -186,11 +241,6 @@ fn resolve_param_types(
     Ok(types)
 }
 
-/// Check if all lambda parameters have explicit types.
-fn all_params_typed(expr: &LambdaExpr<'_>) -> bool {
-    expr.params.iter().all(|p| p.ty.is_some())
-}
-
 /// Generate a unique name for an anonymous funcdef based on signature.
 fn generate_lambda_funcdef_name(params: &[DataType], return_type: &DataType) -> String {
     let param_str = params
@@ -212,10 +262,10 @@ mod tests {
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -225,7 +275,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -270,7 +321,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -312,7 +364,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -343,13 +396,14 @@ mod tests {
     }
 
     #[test]
-    fn lambda_untyped_params_with_expected_funcdef_succeeds() {
+    fn lambda_untyped_params_with_expected_void_funcdef_succeeds() {
         use angelscript_core::entries::{FuncdefEntry, TypeEntry};
         use angelscript_core::primitives;
 
         let mut registry = SymbolRegistry::with_primitives();
 
-        // Register a funcdef type: funcdef int BinaryOp(int, int)
+        // Register a funcdef type: funcdef void BinaryOp(int, int)
+        // Using void return so empty body is valid
         let funcdef_hash = TypeHash::from_name("BinaryOp");
         let funcdef = FuncdefEntry::ffi(
             "BinaryOp",
@@ -357,14 +411,14 @@ mod tests {
                 DataType::simple(primitives::INT32),
                 DataType::simple(primitives::INT32),
             ],
-            DataType::simple(primitives::INT32),
+            DataType::void(),
         );
         registry.register_type(TypeEntry::Funcdef(funcdef)).unwrap();
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -432,7 +486,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -483,18 +538,18 @@ mod tests {
     }
 
     #[test]
-    fn lambda_with_body_requires_statement_compilation() {
+    fn lambda_with_body_compiles_successfully() {
         use angelscript_parser::ast::{Expr, ExprStmt, LiteralExpr, LiteralKind, Stmt};
 
         let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
-        // Create a non-empty body with a statement
+        // Create a non-empty body with a statement: function() { 42; }
         let lit_expr = arena.alloc(Expr::Literal(LiteralExpr {
             kind: LiteralKind::Int(42),
             span: Span::new(1, 15, 2),
@@ -519,17 +574,65 @@ mod tests {
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
         let result = compile_lambda(&mut compiler, &lambda_expr, None);
 
-        // Non-empty body should fail with "requires statement compilation"
+        // Lambda body compilation should now succeed
+        assert!(
+            result.is_ok(),
+            "Lambda with body should compile successfully: {:?}",
+            result
+        );
+
+        // Verify the lambda was registered as a compiled function
+        assert_eq!(emitter.compiled_functions().len(), 1);
+    }
+
+    #[test]
+    fn lambda_non_void_without_return_fails() {
+        use angelscript_core::entries::{FuncdefEntry, TypeEntry};
+        use angelscript_core::primitives;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a funcdef type: funcdef int IntProducer()
+        let funcdef_hash = TypeHash::from_name("IntProducer");
+        let funcdef = FuncdefEntry::ffi("IntProducer", vec![], DataType::simple(primitives::INT32));
+        registry.register_type(TypeEntry::Funcdef(funcdef)).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Lambda with empty body but non-void return type
+        let body = arena.alloc(Block {
+            stmts: &[],
+            span: Span::new(1, 12, 2),
+        });
+
+        let lambda_expr = LambdaExpr {
+            params: &[],
+            return_type: None,
+            body,
+            span: Span::new(1, 1, 14),
+        };
+
+        let expected_type = DataType::simple(funcdef_hash);
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_lambda(&mut compiler, &lambda_expr, Some(&expected_type));
+
+        // Should fail because non-void lambda needs return
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
             CompilationError::Other { message, .. } => {
-                assert!(message.contains("statement compilation"));
+                assert!(
+                    message.contains("not all code paths return"),
+                    "Expected 'not all code paths return' error, got: {}",
+                    message
+                );
             }
-            _ => panic!(
-                "Expected Other error about statement compilation, got {:?}",
-                err
-            ),
+            _ => panic!("Expected Other error about missing return, got {:?}", err),
         }
     }
 }

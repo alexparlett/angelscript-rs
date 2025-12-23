@@ -1,7 +1,7 @@
 //! Operator resolution for expression compilation.
 //!
 //! This module determines how to compile operators given operand types:
-//! - Primitive operations use direct opcodes (AddI32, MulF64, etc.)
+//! - Primitive operations use generic opcodes (Add, Mul, Eq, etc.) - VM determines types from stack
 //! - User-defined operators use method calls (opAdd, opEquals, etc.)
 
 mod binary;
@@ -110,7 +110,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::AddI32,
+                opcode: OpCode::Add,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::INT32),
@@ -128,7 +128,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::AddI64,
+                opcode: OpCode::Add,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::INT64),
@@ -146,7 +146,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::AddF32,
+                opcode: OpCode::Add,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::FLOAT),
@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::AddF64,
+                opcode: OpCode::Add,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::DOUBLE),
@@ -182,7 +182,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::SubI32,
+                opcode: OpCode::Sub,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::INT32),
@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::MulI32,
+                opcode: OpCode::Mul,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::INT32),
@@ -218,7 +218,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::DivI32,
+                opcode: OpCode::Div,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::INT32),
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::ModI32,
+                opcode: OpCode::Mod,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::INT32),
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::EqI32,
+                opcode: OpCode::Eq,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::BOOL),
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::LtI32,
+                opcode: OpCode::Lt,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::BOOL),
@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::LeI32,
+                opcode: OpCode::Le,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::BOOL),
@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::GtI32,
+                opcode: OpCode::Gt,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::BOOL),
@@ -330,7 +330,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::GeI32,
+                opcode: OpCode::Ge,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::BOOL),
@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::EqBool,
+                opcode: OpCode::Eq,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::BOOL),
@@ -482,7 +482,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::AddF64,
+                opcode: OpCode::Add,
                 left_conv: Some(OpCode::I32toF64),
                 right_conv: None,
                 result_type: DataType::simple(primitives::DOUBLE),
@@ -500,7 +500,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::AddF64,
+                opcode: OpCode::Add,
                 left_conv: None,
                 right_conv: Some(OpCode::I32toF64),
                 result_type: DataType::simple(primitives::DOUBLE),
@@ -518,7 +518,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::AddI64,
+                opcode: OpCode::Add,
                 left_conv: Some(OpCode::I32toI64),
                 right_conv: None,
                 result_type: DataType::simple(primitives::INT64),
@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::AddF64,
+                opcode: OpCode::Add,
                 left_conv: Some(OpCode::F32toF64),
                 right_conv: None,
                 result_type: DataType::simple(primitives::DOUBLE),
@@ -557,7 +557,7 @@ mod tests {
         assert_eq!(
             result,
             Some(UnaryResolution::Primitive {
-                opcode: OpCode::NegI32,
+                opcode: OpCode::Neg,
                 result_type: DataType::simple(primitives::INT32),
             })
         );
@@ -572,7 +572,7 @@ mod tests {
         assert_eq!(
             result,
             Some(UnaryResolution::Primitive {
-                opcode: OpCode::NegI64,
+                opcode: OpCode::Neg,
                 result_type: DataType::simple(primitives::INT64),
             })
         );
@@ -587,7 +587,7 @@ mod tests {
         assert_eq!(
             result,
             Some(UnaryResolution::Primitive {
-                opcode: OpCode::NegF32,
+                opcode: OpCode::Neg,
                 result_type: DataType::simple(primitives::FLOAT),
             })
         );
@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(
             result,
             Some(UnaryResolution::Primitive {
-                opcode: OpCode::NegF64,
+                opcode: OpCode::Neg,
                 result_type: DataType::simple(primitives::DOUBLE),
             })
         );
@@ -689,7 +689,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::PowI32,
+                opcode: OpCode::Pow,
                 left_conv: None,
                 right_conv: None, // INT32 -> UINT32 conversion not available
                 result_type: DataType::simple(primitives::INT32),
@@ -707,7 +707,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::PowI64,
+                opcode: OpCode::Pow,
                 left_conv: None,
                 right_conv: None, // INT64 to UINT32 conversion
                 result_type: DataType::simple(primitives::INT64),
@@ -725,7 +725,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::PowF32,
+                opcode: OpCode::Pow,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::FLOAT),
@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::PowF64,
+                opcode: OpCode::Pow,
                 left_conv: None,
                 right_conv: None,
                 result_type: DataType::simple(primitives::DOUBLE),
@@ -761,7 +761,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::PowF64,
+                opcode: OpCode::Pow,
                 left_conv: Some(OpCode::I32toF64),
                 right_conv: None,
                 result_type: DataType::simple(primitives::DOUBLE),
@@ -779,7 +779,7 @@ mod tests {
         assert_eq!(
             result,
             Some(OperatorResolution::Primitive {
-                opcode: OpCode::PowF64,
+                opcode: OpCode::Pow,
                 left_conv: Some(OpCode::F32toF64),
                 right_conv: None,
                 result_type: DataType::simple(primitives::DOUBLE),

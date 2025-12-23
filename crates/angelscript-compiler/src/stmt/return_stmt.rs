@@ -8,7 +8,7 @@ use angelscript_parser::ast::ReturnStmt;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a return statement.
     ///
     /// Validates that:
@@ -95,7 +95,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
@@ -106,7 +107,7 @@ mod tests {
 
         compiler.compile_return(&ret).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Should emit: ReturnVoid (1 byte)
         assert_eq!(chunk.len(), 1);
         assert_eq!(chunk.read_op(0), Some(OpCode::ReturnVoid));
@@ -118,7 +119,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let return_type = DataType::simple(primitives::INT64);
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
@@ -135,7 +137,7 @@ mod tests {
 
         compiler.compile_return(&ret).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Literal 42 produces INT32, return type is INT64, so conversion needed
         // Constant(1) + index(1) + I32toI64(1) + Return(1) = 4 bytes
         assert_eq!(chunk.len(), 4);
@@ -151,7 +153,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
@@ -175,7 +178,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let return_type = DataType::simple(primitives::INT32);
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
@@ -196,7 +200,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Function returns bool, but we return int
         let return_type = DataType::simple(primitives::BOOL);
@@ -222,7 +227,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let return_type = DataType::simple(primitives::BOOL);
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
@@ -239,7 +245,7 @@ mod tests {
 
         compiler.compile_return(&ret).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Should emit: PushTrue, Return (2 bytes total)
         assert_eq!(chunk.len(), 2);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
@@ -249,10 +255,11 @@ mod tests {
     #[test]
     fn return_float_in_float_function() {
         let arena = Bump::new();
-        let (registry, mut constants) = create_test_context();
+        let (registry, _constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let return_type = DataType::simple(primitives::FLOAT);
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
@@ -269,16 +276,16 @@ mod tests {
 
         compiler.compile_return(&ret).unwrap();
 
-        let chunk = emitter.finish();
+        // Verify the constant pool has 3.5 as Float32
+        assert_eq!(emitter.constants().len(), 1);
+
+        let chunk = emitter.finish_chunk();
         // Should emit: Constant(index=0), Return
         // Constant opcode (1) + index (1) + Return (1) = 3 bytes
         assert_eq!(chunk.len(), 3);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_byte(1), Some(0)); // Index 0 in constant pool
         assert_eq!(chunk.read_op(2), Some(OpCode::Return));
-
-        // Verify the constant pool has 3.5 as Float32
-        assert_eq!(constants.len(), 1);
     }
 
     #[test]
@@ -298,7 +305,8 @@ mod tests {
             Span::default(),
         );
 
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Return type is int& (reference to int)
         let mut return_type = DataType::simple(primitives::INT32);
@@ -356,7 +364,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
 
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Return type is int& (reference to int)
         let mut return_type = DataType::simple(primitives::INT32);
@@ -400,7 +409,8 @@ mod tests {
             Span::default(),
         );
 
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Return type is int (by value, not reference)
         let return_type = DataType::simple(primitives::INT32);

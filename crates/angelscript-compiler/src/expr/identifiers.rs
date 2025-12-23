@@ -11,7 +11,7 @@ use crate::scope::VarLookup;
 
 /// Compile an identifier expression.
 pub fn compile_ident<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     ident: &IdentExpr<'ast>,
 ) -> Result<ExprInfo> {
     let name = ident.ident.name;
@@ -32,6 +32,54 @@ pub fn compile_ident<'ast>(
         return compile_local(compiler, lookup);
     }
 
+    // Check if scope refers to an enum type (e.g., Color::Red or test::Color::Green)
+    if let Some(scope) = ident.scope
+        && !scope.segments.is_empty()
+    {
+        // Build the full scope path as the enum type name
+        // For `test::Color::Green`: scope = ["test", "Color"], ident = "Green"
+        // So enum_name = "test::Color" and value_name = "Green"
+        let enum_name: String = scope
+            .segments
+            .iter()
+            .map(|s| s.name)
+            .collect::<Vec<_>>()
+            .join("::");
+
+        // Try to resolve the scope as a type
+        if let Some(type_hash) = compiler.ctx().resolve_type(&enum_name) {
+            // Check if it's an enum - extract data before mutably borrowing
+            let enum_value = compiler
+                .ctx()
+                .get_type(type_hash)
+                .and_then(|t| t.as_enum())
+                .and_then(|enum_entry| enum_entry.get_value(name));
+
+            if let Some(value) = enum_value {
+                // Emit constant integer value
+                compiler.emitter().emit_int(value);
+
+                // Return enum type with is_enum flag set
+                let mut data_type = DataType::simple(type_hash);
+                data_type.is_enum = true;
+                return Ok(ExprInfo::rvalue(data_type));
+            }
+
+            // Check if it's an enum but with an invalid member
+            if compiler
+                .ctx()
+                .get_type(type_hash)
+                .and_then(|t| t.as_enum())
+                .is_some()
+            {
+                return Err(CompilationError::Other {
+                    message: format!("enum '{}' has no member '{}'", enum_name, name),
+                    span,
+                });
+            }
+        }
+    }
+
     // Check for globals via CompilationContext
     if let Some(global_hash) = compiler.ctx().resolve_global(&qualified_name) {
         // Get the global entry info before borrowing emitter mutably
@@ -43,6 +91,52 @@ pub fn compile_ident<'ast>(
             compiler.emitter().emit_get_global(global_hash);
             // Use ExprInfo::global to track that this is a global variable
             return Ok(ExprInfo::global(data_type, is_const));
+        }
+    }
+
+    // Check if we're inside a class and the identifier is a member field (implicit this.field)
+    if ident.scope.is_none()
+        && let Some(class_hash) = compiler.current_class()
+    {
+        // Extract field info before mutably borrowing compiler
+        let field_info = compiler
+            .ctx()
+            .get_type(class_hash)
+            .and_then(|e| e.as_class())
+            .and_then(|class| {
+                class
+                    .properties
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.name == name)
+                    .map(|(idx, p)| (idx, p.clone()))
+            });
+
+        if let Some((field_idx, property)) = field_info {
+            // Get 'this' const status from the declared parameter
+            let this_is_const = compiler
+                .ctx()
+                .get_local("this")
+                .map(|v| v.is_const)
+                .unwrap_or(false);
+
+            // Emit: GetThis, GetField (implicit this.field)
+            compiler.emitter().emit_get_this();
+
+            if property.is_direct_field() {
+                compiler.emitter().emit_get_field(field_idx as u16);
+                return Ok(ExprInfo::member(property.data_type, this_is_const));
+            } else if let Some(getter_hash) = property.getter {
+                // Virtual property - call getter
+                compiler.emitter().emit_call_method(getter_hash, 0);
+                return Ok(ExprInfo::rvalue(property.data_type));
+            } else {
+                // Write-only property - cannot read
+                return Err(CompilationError::Other {
+                    message: format!("property '{}' is write-only", name),
+                    span,
+                });
+            }
         }
     }
 
@@ -74,7 +168,7 @@ pub fn build_qualified_name(ident: &IdentExpr<'_>) -> String {
     }
 }
 
-fn compile_this(compiler: &mut ExprCompiler<'_, '_, '_>, span: Span) -> Result<ExprInfo> {
+fn compile_this(compiler: &mut ExprCompiler<'_, '_>, span: Span) -> Result<ExprInfo> {
     match compiler.current_class() {
         Some(class_hash) => {
             compiler.emitter().emit_get_this();
@@ -87,7 +181,7 @@ fn compile_this(compiler: &mut ExprCompiler<'_, '_, '_>, span: Span) -> Result<E
     }
 }
 
-fn compile_local(compiler: &mut ExprCompiler<'_, '_, '_>, lookup: VarLookup) -> Result<ExprInfo> {
+fn compile_local(compiler: &mut ExprCompiler<'_, '_>, lookup: VarLookup) -> Result<ExprInfo> {
     match lookup {
         VarLookup::Local(var) => {
             compiler.emitter().emit_get_local(var.slot);
@@ -112,11 +206,11 @@ mod tests {
     use angelscript_core::{TypeHash, primitives};
     use angelscript_registry::SymbolRegistry;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
+        emitter: &'a mut BytecodeEmitter,
         current_class: Option<TypeHash>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, current_class)
     }
 
@@ -145,7 +239,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -158,7 +253,7 @@ mod tests {
         assert!(info.is_lvalue);
         assert!(info.is_mutable);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.read_op(0), Some(OpCode::GetLocal));
     }
 
@@ -177,7 +272,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -196,7 +292,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -216,7 +313,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let class_hash = TypeHash::from_name("MyClass");
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
@@ -230,7 +328,7 @@ mod tests {
         assert!(info.is_lvalue);
         assert!(!info.is_mutable); // 'this' is const
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.read_op(0), Some(OpCode::GetThis));
     }
 
@@ -240,7 +338,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -252,5 +351,578 @@ mod tests {
             result,
             Err(CompilationError::ThisOutsideClass { .. })
         ));
+    }
+
+    // =========================================================================
+    // Implicit this.field access tests
+    // =========================================================================
+
+    use angelscript_core::entries::{ClassEntry, PropertyEntry};
+    use angelscript_core::{TypeKind, Visibility};
+
+    fn create_class_with_field(registry: &mut SymbolRegistry) -> TypeHash {
+        let class_hash = TypeHash::from_name("TestClass");
+
+        let mut class = ClassEntry::ffi("TestClass", TypeKind::script_object());
+        class.properties.push(PropertyEntry::field(
+            "x",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        ));
+        class.properties.push(PropertyEntry::field(
+            "y",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        ));
+        registry.register_type(class.into()).unwrap();
+
+        class_hash
+    }
+
+    #[test]
+    fn compile_implicit_field_access_in_method() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter (as methods do)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false, // mutable this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
+
+        // Access 'x' - should resolve to this.x
+        let ident = make_ident_expr("x");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+        assert!(info.is_lvalue);
+
+        let chunk = emitter.finish_chunk();
+        // Bytecode: GetThis, GetField
+        chunk.assert_opcodes(&[OpCode::GetThis, OpCode::GetField]);
+    }
+
+    #[test]
+    fn compile_implicit_field_access_const_method() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter as const (const method)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            true, // const this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
+
+        // Access 'x' - should resolve to this.x
+        let ident = make_ident_expr("x");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+        assert!(info.is_lvalue);
+        assert!(!info.is_mutable); // const method means field is not mutable
+
+        let chunk = emitter.finish_chunk();
+        chunk.assert_opcodes(&[OpCode::GetThis, OpCode::GetField]);
+    }
+
+    #[test]
+    fn compile_implicit_field_local_takes_precedence() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false,
+            Span::default(),
+        );
+
+        // Also declare a local variable named 'x' that shadows the field
+        let _ = ctx.declare_local(
+            "x".to_string(),
+            DataType::simple(primitives::FLOAT),
+            false,
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
+
+        // Access 'x' - should resolve to local variable, NOT field
+        let ident = make_ident_expr("x");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        // Should be float (local), not int (field)
+        assert_eq!(info.data_type.type_hash, primitives::FLOAT);
+
+        let chunk = emitter.finish_chunk();
+        // Should use GetLocal, not GetThis + GetField
+        chunk.assert_opcodes(&[OpCode::GetLocal]);
+    }
+
+    #[test]
+    fn compile_implicit_field_not_in_class() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // No 'this' parameter - not in a class method
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        // current_class is None
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        // Access 'x' - should fail as undefined variable
+        let ident = make_ident_expr("x");
+        let result = compile_ident(&mut compiler, &ident);
+
+        // Even though 'x' is a field in the class, we're not in a class method
+        // so it should be UndefinedVariable
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::UndefinedVariable { .. }
+        ));
+
+        // Suppress unused warning
+        let _ = class_hash;
+    }
+
+    // =========================================================================
+    // Enum member access tests
+    // =========================================================================
+
+    use angelscript_core::TypeSource;
+    use angelscript_core::entries::EnumEntry;
+
+    fn create_enum(registry: &mut SymbolRegistry) -> TypeHash {
+        let enum_hash = TypeHash::from_name("Color");
+
+        let enum_entry = EnumEntry::new(
+            "Color".to_string(),
+            vec![],
+            "Color".to_string(),
+            enum_hash,
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Red", 0)
+        .with_value("Green", 1)
+        .with_value("Blue", 2);
+
+        registry.register_type(enum_entry.into()).unwrap();
+
+        enum_hash
+    }
+
+    fn make_scoped_ident_expr<'a>(
+        arena: &'a bumpalo::Bump,
+        scope_name: &'a str,
+        member_name: &'a str,
+    ) -> IdentExpr<'a> {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let scope_ident = arena.alloc(Ident::new(
+            scope_name,
+            Span::new(1, 1, scope_name.len() as u32),
+        ));
+        let segments: &[Ident<'_>] = arena.alloc_slice_copy(&[*scope_ident]);
+
+        IdentExpr {
+            scope: Some(Scope {
+                is_absolute: false,
+                segments,
+                span: Span::new(1, 1, scope_name.len() as u32),
+            }),
+            ident: Ident::new(
+                member_name,
+                Span::new(1, scope_name.len() as u32 + 3, member_name.len() as u32),
+            ),
+            type_args: &[],
+            span: Span::new(1, 1, (scope_name.len() + member_name.len() + 2) as u32),
+        }
+    }
+
+    #[test]
+    fn compile_enum_member_access() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let enum_hash = create_enum(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        let ident = make_scoped_ident_expr(&arena, "Color", "Red");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, enum_hash);
+        assert!(!info.is_lvalue); // Enum values are rvalues (constants)
+
+        let chunk = emitter.finish_chunk();
+        // Should emit a constant integer (PushZero is an optimization for 0)
+        chunk.assert_opcodes(&[OpCode::PushZero]);
+    }
+
+    #[test]
+    fn compile_enum_member_with_explicit_value() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create an enum with explicit values
+        let enum_hash = TypeHash::from_name("Difficulty");
+        let enum_entry = EnumEntry::new(
+            "Difficulty".to_string(),
+            vec![],
+            "Difficulty".to_string(),
+            enum_hash,
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Easy", 0)
+        .with_value("Normal", 1)
+        .with_value("Hard", 2)
+        .with_value("Expert", 3);
+        registry.register_type(enum_entry.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        let ident = make_scoped_ident_expr(&arena, "Difficulty", "Hard");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, enum_hash);
+    }
+
+    #[test]
+    fn compile_enum_invalid_member_error() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let _ = create_enum(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        // "Yellow" is not a member of Color
+        let ident = make_scoped_ident_expr(&arena, "Color", "Yellow");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("has no member"));
+                assert!(message.contains("Yellow"));
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compile_non_enum_scoped_ident_falls_through() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create a class, not an enum
+        let _class_hash = TypeHash::from_name("MyClass");
+        let class = ClassEntry::ffi("MyClass", TypeKind::script_object());
+        registry.register_type(class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        // MyClass::Something - MyClass is a class, not an enum
+        let ident = make_scoped_ident_expr(&arena, "MyClass", "Something");
+        let result = compile_ident(&mut compiler, &ident);
+
+        // Should fall through to UndefinedVariable since MyClass is not an enum
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::UndefinedVariable { .. }
+        ));
+    }
+
+    // =========================================================================
+    // Qualified enum path tests (Namespace::Enum::Value)
+    // =========================================================================
+
+    fn create_namespaced_enum(registry: &mut SymbolRegistry) -> TypeHash {
+        let enum_hash = TypeHash::from_name("test::Color");
+
+        let enum_entry = EnumEntry::new(
+            "test::Color".to_string(),
+            vec!["test".to_string()],
+            "Color".to_string(),
+            enum_hash,
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Red", 0)
+        .with_value("Green", 1)
+        .with_value("Blue", 2);
+
+        registry.register_type(enum_entry.into()).unwrap();
+
+        enum_hash
+    }
+
+    fn make_multi_segment_scoped_ident_expr<'a>(
+        arena: &'a bumpalo::Bump,
+        scope_segments: &[&'a str],
+        member_name: &'a str,
+    ) -> IdentExpr<'a> {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let segments: Vec<Ident<'_>> = scope_segments
+            .iter()
+            .map(|s| Ident::new(*s, Span::default()))
+            .collect();
+        let segments = arena.alloc_slice_copy(&segments);
+
+        IdentExpr {
+            scope: Some(Scope {
+                is_absolute: false,
+                segments,
+                span: Span::default(),
+            }),
+            ident: Ident::new(member_name, Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }
+    }
+
+    #[test]
+    fn compile_qualified_enum_path() {
+        // Test: test::Color::Green
+        let mut registry = SymbolRegistry::with_primitives();
+        let enum_hash = create_namespaced_enum(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        // test::Color::Green - scope = ["test", "Color"], ident = "Green"
+        let ident = make_multi_segment_scoped_ident_expr(&arena, &["test", "Color"], "Green");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, enum_hash);
+        assert!(info.data_type.is_enum);
+        assert!(!info.is_lvalue);
+
+        let chunk = emitter.finish_chunk();
+        // Green = 1
+        chunk.assert_opcodes(&[OpCode::PushOne]);
+    }
+
+    #[test]
+    fn compile_qualified_enum_path_invalid_member() {
+        // Test: test::Color::Yellow (Yellow doesn't exist)
+        let mut registry = SymbolRegistry::with_primitives();
+        let _ = create_namespaced_enum(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        let ident = make_multi_segment_scoped_ident_expr(&arena, &["test", "Color"], "Yellow");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("has no member"));
+                assert!(message.contains("Yellow"));
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compile_deeply_nested_enum_path() {
+        // Test: deeply::nested::ns::Status::Active
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let enum_hash = TypeHash::from_name("deeply::nested::ns::Status");
+        let enum_entry = EnumEntry::new(
+            "deeply::nested::ns::Status".to_string(),
+            vec!["deeply".to_string(), "nested".to_string(), "ns".to_string()],
+            "Status".to_string(),
+            enum_hash,
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Inactive", 0)
+        .with_value("Active", 1)
+        .with_value("Pending", 2);
+        registry.register_type(enum_entry.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        let ident = make_multi_segment_scoped_ident_expr(
+            &arena,
+            &["deeply", "nested", "ns", "Status"],
+            "Active",
+        );
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, enum_hash);
+        assert!(info.data_type.is_enum);
+    }
+
+    // =========================================================================
+    // build_qualified_name tests
+    // =========================================================================
+
+    #[test]
+    fn build_qualified_name_no_scope() {
+        use angelscript_parser::ast::Ident;
+
+        let ident = IdentExpr {
+            scope: None,
+            ident: Ident::new("Entity", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        };
+
+        assert_eq!(build_qualified_name(&ident), "Entity");
+    }
+
+    #[test]
+    fn build_qualified_name_single_segment() {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let arena = bumpalo::Bump::new();
+        let segments = arena.alloc_slice_copy(&[Ident::new("Game", Span::default())]);
+        let scope = Scope::new(false, segments, Span::default());
+
+        let ident = IdentExpr {
+            scope: Some(scope),
+            ident: Ident::new("Entity", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        };
+
+        assert_eq!(build_qualified_name(&ident), "Game::Entity");
+    }
+
+    #[test]
+    fn build_qualified_name_nested_scope() {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let arena = bumpalo::Bump::new();
+        let segments = arena.alloc_slice_copy(&[
+            Ident::new("Game", Span::default()),
+            Ident::new("Physics", Span::default()),
+        ]);
+        let scope = Scope::new(false, segments, Span::default());
+
+        let ident = IdentExpr {
+            scope: Some(scope),
+            ident: Ident::new("Body", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        };
+
+        assert_eq!(build_qualified_name(&ident), "Game::Physics::Body");
+    }
+
+    #[test]
+    fn build_qualified_name_empty_scope_segments() {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let scope = Scope::new(false, &[], Span::default());
+
+        let ident = IdentExpr {
+            scope: Some(scope),
+            ident: Ident::new("Widget", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        };
+
+        // Empty segments should behave like no scope
+        assert_eq!(build_qualified_name(&ident), "Widget");
     }
 }

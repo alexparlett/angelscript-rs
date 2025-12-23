@@ -9,7 +9,7 @@ int singleParam(int x) {
 }
 
 float multipleParams(int a, float b, string c) {
-    print(c);
+    print("{}", c);
     return a + b;
 }
 
@@ -18,7 +18,7 @@ void refParams(int &out result) {
 }
 
 void inRefParams(const int &in value) {
-    print(value);
+    print("{}", value);
 }
 
 void inoutParams(int &inout x) {

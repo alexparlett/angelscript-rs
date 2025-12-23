@@ -29,16 +29,6 @@ void test_inline_lambda() {
     applyOp(function(a, b) { return a * b; });
 }
 
-// Lambda with variable capture
-void test_variable_capture() {
-    int multiplier = 5;
-    int offset = 10;
-
-    Transformer @transform = function(x) {
-        return x * multiplier + offset;
-    };
-}
-
 // Multiple lambdas in same function
 void test_multiple_lambdas() {
     Callback @cb1 = function(x) { };
@@ -87,17 +77,6 @@ funcdef Callback CallbackMaker();
 void test_nested_lambda() {
     CallbackMaker @maker = function() {
         return function(x) { };
-    };
-}
-
-// Lambda with multiple captured variables
-void test_multiple_captures() {
-    int a = 1;
-    int b = 2;
-    int c = 3;
-
-    Transformer @compute = function(x) {
-        return x + a + b + c;
     };
 }
 

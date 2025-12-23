@@ -65,7 +65,7 @@ pub use type_resolver::TypeResolver;
 // Re-export CompilationError from core for convenience
 pub use angelscript_core::CompilationError;
 
-use angelscript_core::UnitId;
+use angelscript_core::{TypeHash, UnitId};
 use angelscript_parser::ast::Script;
 use angelscript_registry::SymbolRegistry;
 
@@ -115,6 +115,8 @@ pub struct Compiler<'a> {
     global_registry: &'a SymbolRegistry,
     /// Unit ID for this compilation.
     unit_id: UnitId,
+    /// String type hash from string factory (for string literal compilation).
+    string_type_hash: Option<TypeHash>,
 }
 
 impl<'a> Compiler<'a> {
@@ -124,10 +126,16 @@ impl<'a> Compiler<'a> {
     ///
     /// * `global_registry` - Registry containing FFI types and shared types
     /// * `unit_id` - Unique identifier for this compilation unit
-    pub fn new(global_registry: &'a SymbolRegistry, unit_id: UnitId) -> Self {
+    /// * `string_type_hash` - Type hash for string literals (from StringFactory)
+    pub fn new(
+        global_registry: &'a SymbolRegistry,
+        unit_id: UnitId,
+        string_type_hash: Option<TypeHash>,
+    ) -> Self {
         Self {
             global_registry,
             unit_id,
+            string_type_hash,
         }
     }
 
@@ -136,6 +144,12 @@ impl<'a> Compiler<'a> {
     /// Runs all compilation passes and returns the compiled module.
     pub fn compile(&self, script: &Script<'_>) -> CompilationResult {
         let mut ctx = CompilationContext::new(self.global_registry);
+
+        // Set string type hash if configured (enables string literal compilation)
+        if let Some(hash) = self.string_type_hash {
+            ctx.set_string_type(hash);
+        }
+
         let mut all_errors = Vec::new();
 
         // Pass 1: Registration

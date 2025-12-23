@@ -2,7 +2,7 @@
 //!
 //! Handles switch statements with case values and default case.
 
-use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span, primitives};
+use angelscript_core::{CompilationError, DataType, Span};
 use angelscript_parser::ast::{Expr, SwitchStmt, UnaryOp};
 
 use crate::bytecode::OpCode;
@@ -10,7 +10,7 @@ use crate::emit::JumpLabel;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a switch statement.
     ///
     /// Switch statements compare an expression against case values and execute
@@ -49,8 +49,8 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             expr_compiler.infer(switch.expr)?
         };
 
-        // Validate switch type - must be primitive or have opEquals
-        let equals_method = self.validate_switch_type(&switch_info.data_type, span)?;
+        // Validate switch type - must be numeric, bool, or enum
+        self.validate_switch_type(&switch_info.data_type, span)?;
 
         // Enter switch context (for break handling)
         self.emitter.enter_switch();
@@ -83,7 +83,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                     expr_compiler.check(value, &switch_info.data_type)?;
 
                     // Emit equality check
-                    self.emit_equality(&switch_info.data_type, equals_method)?;
+                    self.emit_equality();
 
                     // Jump to case body if equal
                     let jump = self.emitter.emit_jump(OpCode::JumpIfTrue);
@@ -141,50 +141,30 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 
     /// Validate that the switch expression type is valid.
     ///
-    /// Returns the opEquals method hash if the type is an object type.
+    /// Only numeric primitives, bools, and enums are supported in switch statements.
     fn validate_switch_type(
         &self,
         data_type: &DataType,
         span: angelscript_core::Span,
     ) -> Result<Option<angelscript_core::TypeHash>> {
-        // Primitives are always valid
+        // Numeric primitives and bools are valid
         if data_type.is_primitive() {
             return Ok(None);
         }
 
-        // Objects need opEquals
-        let type_entry =
-            self.ctx
-                .get_type(data_type.type_hash)
-                .ok_or_else(|| CompilationError::Other {
-                    message: format!("unknown type for switch: {:?}", data_type.type_hash),
-                    span,
-                })?;
+        // Enums are ints under the hood, so they're also valid for switch
+        if data_type.is_enum {
+            return Ok(None);
+        }
 
-        let class = type_entry
-            .as_class()
-            .ok_or_else(|| CompilationError::Other {
-                message: format!(
-                    "type '{}' cannot be used in switch",
-                    type_entry.qualified_name()
-                ),
-                span,
-            })?;
+        // Other types (objects, handles, etc.) are not supported
+        let type_name = self
+            .ctx
+            .get_type(data_type.type_hash)
+            .map(|t| t.qualified_name().to_string())
+            .unwrap_or_else(|| format!("{:?}", data_type.type_hash));
 
-        // Look up opEquals
-        let equals = class
-            .behaviors
-            .get_operator(OperatorBehavior::OpEquals)
-            .and_then(|ops| ops.first().copied())
-            .ok_or_else(|| CompilationError::Other {
-                message: format!(
-                    "type '{}' does not support switch (missing opEquals)",
-                    class.name
-                ),
-                span,
-            })?;
-
-        Ok(Some(equals))
+        Err(CompilationError::InvalidSwitchType { type_name, span })
     }
 
     /// Validate that a case value is a compile-time constant.
@@ -255,63 +235,11 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         }
     }
 
-    /// Emit equality comparison.
-    fn emit_equality(
-        &mut self,
-        data_type: &DataType,
-        equals_method: Option<angelscript_core::TypeHash>,
-    ) -> Result<()> {
-        if data_type.is_primitive() {
-            // Use primitive equality
-            match data_type.type_hash {
-                h if h == primitives::INT8 || h == primitives::INT16 || h == primitives::INT32 => {
-                    self.emitter.emit(OpCode::EqI32);
-                }
-                h if h == primitives::INT64 => {
-                    self.emitter.emit(OpCode::EqI64);
-                }
-                h if h == primitives::UINT8
-                    || h == primitives::UINT16
-                    || h == primitives::UINT32 =>
-                {
-                    self.emitter.emit(OpCode::EqI32);
-                }
-                h if h == primitives::UINT64 => {
-                    self.emitter.emit(OpCode::EqI64);
-                }
-                h if h == primitives::FLOAT => {
-                    self.emitter.emit(OpCode::EqF32);
-                }
-                h if h == primitives::DOUBLE => {
-                    self.emitter.emit(OpCode::EqF64);
-                }
-                h if h == primitives::BOOL => {
-                    self.emitter.emit(OpCode::EqBool);
-                }
-                _ => {
-                    // Fall back to opEquals for other types
-                    if let Some(method) = equals_method {
-                        self.emitter.emit_call_method(method, 1);
-                    } else {
-                        return Err(CompilationError::Other {
-                            message: "cannot compare this type".to_string(),
-                            span: angelscript_core::Span::default(),
-                        });
-                    }
-                }
-            }
-        } else {
-            // Call opEquals method
-            if let Some(method) = equals_method {
-                self.emitter.emit_call_method(method, 1);
-            } else {
-                return Err(CompilationError::Other {
-                    message: "type does not support equality comparison".to_string(),
-                    span: angelscript_core::Span::default(),
-                });
-            }
-        }
-        Ok(())
+    /// Emit equality comparison for primitives and enums.
+    fn emit_equality(&mut self) {
+        // Use generic equality opcode - VM determines types from stack values
+        // Enums are ints under the hood, so they use the same opcode
+        self.emitter.emit(OpCode::Eq);
     }
 }
 
@@ -336,7 +264,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) {}
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -353,7 +282,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Empty switch: load value (Constant), pop it, jump to end
         // Should contain: Constant (the 42), Pop
         chunk.assert_contains_opcodes(&[OpCode::Constant, OpCode::Pop]);
@@ -365,7 +294,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { case 42: break; }
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -400,14 +330,14 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Single case: load switch expr, dup, load case value, compare, jump to body if match
         // The pattern is: Constant (42), Dup, Constant (42), EqI32, JumpIfTrue (to body), Pop, Pop, Jump (to end)
         chunk.assert_contains_opcodes(&[
             OpCode::Constant,
             OpCode::Dup,
             OpCode::Constant,
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
             OpCode::Pop,
             OpCode::Jump,
@@ -420,7 +350,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { default: break; }
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -449,7 +380,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Default only: load switch expr, pop it (no comparison), execute default body, jump out
         // Should contain: Constant (42), Pop, Jump
         chunk.assert_contains_opcodes(&[OpCode::Constant, OpCode::Pop, OpCode::Jump]);
@@ -461,7 +392,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { default: break; default: break; }
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -513,7 +445,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { case 1: break; default: break; }
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -553,13 +486,13 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Case + default: load expr, dup, load case val, compare, jump to body if match
         // Actual pattern uses JumpIfTrue when case matches, then jumps to end after body
         chunk.assert_contains_opcodes(&[
             OpCode::Constant,
             OpCode::Dup,
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
             OpCode::Pop,
             OpCode::Jump,
@@ -572,7 +505,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { case 1: case 2: break; }
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -611,18 +545,18 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Multiple case values (case 1, case 2): should have two comparisons with JumpIfTrue for each
         // Pattern: Constant (42), Dup, PushOne (1), EqI32, JumpIfTrue, Pop, Dup, Constant (2), EqI32, JumpIfTrue
         chunk.assert_contains_opcodes(&[
             OpCode::Constant, // 42
             OpCode::Dup,
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue, // Match case 1 -> jump to body
             OpCode::Pop,
             OpCode::Dup,
             OpCode::Constant, // 2
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue, // Match case 2 -> jump to body
         ]);
     }
@@ -633,7 +567,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (true) { case true: break; }
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -668,14 +603,14 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bool switch: load true, dup, load true, compare bools, jump to body if match
-        // Pattern: PushTrue (value), Dup, PushTrue (case), EqBool, JumpIfTrue
+        // Pattern: PushTrue (value), Dup, PushTrue (case), Eq, JumpIfTrue
         chunk.assert_contains_opcodes(&[
             OpCode::PushTrue,
             OpCode::Dup,
             OpCode::PushTrue,
-            OpCode::EqBool,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
         ]);
     }
@@ -688,7 +623,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { case foo(): break; } - should fail (function call not allowed)
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -760,7 +696,8 @@ mod tests {
         .unwrap();
         ctx.mark_local_initialized("x");
 
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { case x: break; } - should fail (x is not const)
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -826,7 +763,8 @@ mod tests {
         .unwrap();
         ctx.mark_local_initialized("CONST_VAL");
 
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { case CONST_VAL: break; } - should succeed
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -864,14 +802,14 @@ mod tests {
         // Should succeed because CONST_VAL is const
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Const var case: load switch expr, dup, load const var, compare, jump to body if match
         // Pattern: Constant (42), Dup, GetLocal (CONST_VAL), EqI32, JumpIfTrue
         chunk.assert_contains_opcodes(&[
             OpCode::Constant,
             OpCode::Dup,
             OpCode::GetLocal,
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
         ]);
     }
@@ -884,7 +822,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { case -1: break; } - should succeed (negative literal)
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -926,14 +865,14 @@ mod tests {
         // Should succeed because -1 is allowed (unary minus on literal)
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Negative literal case: load expr, dup, load 1, negate, compare, jump to body if match
         // Actual pattern: Constant (42), Dup, PushOne (1), NegI32, EqI32, JumpIfTrue
         chunk.assert_contains_opcodes(&[
             OpCode::Constant,
             OpCode::Dup,
-            OpCode::NegI32,
-            OpCode::EqI32,
+            OpCode::Neg,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
         ]);
     }
@@ -958,7 +897,8 @@ mod tests {
         .unwrap();
         ctx.mark_local_initialized("CONST_VAL");
 
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // switch (42) { case -CONST_VAL: break; } - should succeed (negated const var)
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -1002,15 +942,15 @@ mod tests {
         // Should succeed because -CONST_VAL is a const expression
         compiler.compile_switch(&switch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Negated const var case: load expr, dup, load const var, negate, compare, jump to body if match
         // Pattern: Constant (42), Dup, GetLocal (CONST_VAL), NegI32, EqI32, JumpIfTrue
         chunk.assert_contains_opcodes(&[
             OpCode::Constant,
             OpCode::Dup,
             OpCode::GetLocal,
-            OpCode::NegI32,
-            OpCode::EqI32,
+            OpCode::Neg,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
         ]);
     }

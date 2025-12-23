@@ -13,7 +13,7 @@ use crate::operators::{OperatorResolution, resolve_binary};
 
 /// Compile a binary expression.
 pub fn compile_binary<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &BinaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     // Handle short-circuit operators specially (not overloadable)
@@ -114,7 +114,7 @@ pub fn compile_binary<'ast>(
         }
         OperatorResolution::HandleComparison { negate } => {
             // Operands already on the stack
-            compiler.emitter().emit(OpCode::EqHandle);
+            compiler.emitter().emit(OpCode::Eq);
             if negate {
                 compiler.emitter().emit(OpCode::Not);
             }
@@ -125,7 +125,7 @@ pub fn compile_binary<'ast>(
 
 /// Compile && with short-circuit evaluation.
 fn compile_logical_and<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &BinaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     let bool_type = DataType::simple(primitives::BOOL);
@@ -150,7 +150,7 @@ fn compile_logical_and<'ast>(
 
 /// Compile || with short-circuit evaluation.
 fn compile_logical_or<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &BinaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     let bool_type = DataType::simple(primitives::BOOL);
@@ -175,7 +175,7 @@ fn compile_logical_or<'ast>(
 
 /// Compile ^^ (logical XOR) - no short circuit, both sides always evaluated.
 fn compile_logical_xor<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &BinaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     let bool_type = DataType::simple(primitives::BOOL);
@@ -184,7 +184,7 @@ fn compile_logical_xor<'ast>(
     compiler.check(expr.right, &bool_type)?;
 
     // XOR for booleans: a != b
-    compiler.emitter().emit(OpCode::EqBool);
+    compiler.emitter().emit(OpCode::Eq);
     compiler.emitter().emit(OpCode::Not);
 
     Ok(ExprInfo::rvalue(bool_type))
@@ -201,10 +201,10 @@ mod tests {
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -228,7 +228,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let left = make_int_literal(&arena, 1);
@@ -248,9 +249,9 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
-        // Bytecode: PushOne (left=1), Constant (right=2), AddI32
-        chunk.assert_opcodes(&[OpCode::PushOne, OpCode::Constant, OpCode::AddI32]);
+        let chunk = emitter.finish_chunk();
+        // Bytecode: PushOne (left=1), Constant (right=2), Add
+        chunk.assert_opcodes(&[OpCode::PushOne, OpCode::Constant, OpCode::Add]);
     }
 
     #[test]
@@ -259,7 +260,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let left = make_int_literal(&arena, 5);
@@ -280,9 +282,9 @@ mod tests {
         // Comparison should return bool
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
 
-        let chunk = emitter.finish();
-        // Bytecode: Constant (left), Constant (right), LtI32
-        chunk.assert_opcodes(&[OpCode::Constant, OpCode::Constant, OpCode::LtI32]);
+        let chunk = emitter.finish_chunk();
+        // Bytecode: Constant (left), Constant (right), Lt
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::Constant, OpCode::Lt]);
     }
 
     #[test]
@@ -291,7 +293,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let left = make_bool_literal(&arena, true);
@@ -311,7 +314,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: PushTrue (left), JumpIfFalse, Pop, PushFalse (right)
         chunk.assert_contains_opcodes(&[
             OpCode::PushTrue,
@@ -327,7 +330,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let left = make_bool_literal(&arena, false);
@@ -347,7 +351,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: PushFalse (left), JumpIfTrue, Pop, PushTrue (right)
         chunk.assert_contains_opcodes(&[
             OpCode::PushFalse,
@@ -363,7 +367,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let left = make_bool_literal(&arena, true);
@@ -383,13 +388,8 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
 
-        let chunk = emitter.finish();
-        // Bytecode: PushTrue (left), PushTrue (right), EqBool, Not
-        chunk.assert_opcodes(&[
-            OpCode::PushTrue,
-            OpCode::PushTrue,
-            OpCode::EqBool,
-            OpCode::Not,
-        ]);
+        let chunk = emitter.finish_chunk();
+        // Bytecode: PushTrue (left), PushTrue (right), Eq, Not
+        chunk.assert_opcodes(&[OpCode::PushTrue, OpCode::PushTrue, OpCode::Eq, OpCode::Not]);
     }
 }

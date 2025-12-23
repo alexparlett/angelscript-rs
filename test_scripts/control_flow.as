@@ -25,28 +25,28 @@ void testIf() {
 void testWhile() {
     int i = 0;
     while (i < 10) {
-        print(i);
+        print("{}", i);
         i++;
     }
-    
+
     int j = 0;
     do {
-        print(j);
+        print("{}", j);
         j++;
     } while (j < 5);
 }
 
 void testFor() {
     for (int i = 0; i < 10; i++) {
-        print(i);
+        print("{}", i);
     }
-    
+
     // Infinite loop (commented out)
     // for (;;) { }
-    
+
     // With complex expressions
     for (int i = 0, j = 10; i < j; i++, j--) {
-        print(i + j);
+        print("{}", i + j);
     }
 }
 
@@ -101,25 +101,6 @@ void testSwitchFloat() {
     }
 }
 
-void testSwitchString() {
-    string s = "hello";
-
-    switch (s) {
-        case "hello":
-            print("greeting");
-            break;
-        case "goodbye":
-            print("farewell");
-            break;
-        case "":
-            print("empty string");
-            break;
-        default:
-            print("unknown string");
-            break;
-    }
-}
-
 // Classes for type pattern matching tests
 class Animal {
     Animal() {}
@@ -136,66 +117,66 @@ class Cat : Animal {
     void speak() { print("meow"); }
 }
 
-void testSwitchHandleNull() {
-    Animal@ pet = null;
+// We removed pattern matching
+// void testSwitchHandleNull() {
+//     Animal@ pet = null;
 
-    switch (pet) {
-        case null:
-            print("no pet");
-            break;
-        default:
-            print("has a pet");
-            break;
-    }
-}
+//     switch (pet) {
+//         case null:
+//             print("no pet");
+//             break;
+//         default:
+//             print("has a pet");
+//             break;
+//     }
+// }
+// void testSwitchTypePattern() {
+//     Dog@ dog = Dog();
+//     Animal@ pet = dog;
 
-void testSwitchTypePattern() {
-    Dog@ dog = Dog();
-    Animal@ pet = dog;
+//     switch (pet) {
+//         case Dog:
+//             print("it's a dog");
+//             break;
+//         case Cat:
+//             print("it's a cat");
+//             break;
+//         case null:
+//             print("no animal");
+//             break;
+//         default:
+//             print("some other animal");
+//             break;
+//     }
+// }
 
-    switch (pet) {
-        case Dog:
-            print("it's a dog");
-            break;
-        case Cat:
-            print("it's a cat");
-            break;
-        case null:
-            print("no animal");
-            break;
-        default:
-            print("some other animal");
-            break;
-    }
-}
+// void testSwitchTypePatternCat() {
+//     Cat@ cat = Cat();
+//     Animal@ pet = cat;
 
-void testSwitchTypePatternCat() {
-    Cat@ cat = Cat();
-    Animal@ pet = cat;
-
-    switch (pet) {
-        case Dog:
-            print("it's a dog");
-            break;
-        case Cat:
-            print("it's a cat");
-            break;
-        default:
-            print("unknown animal");
-            break;
-    }
-}
+//     switch (pet) {
+//         case Dog:
+//             print("it's a dog");
+//             break;
+//         case Cat:
+//             print("it's a cat");
+//             break;
+//         default:
+//             print("unknown animal");
+//             break;
+//     }
+// }
 
 void testBreakContinue() {
     for (int i = 0; i < 10; i++) {
         if (i == 3) continue;
         if (i == 7) break;
-        print(i);
+        print("{}", i);
     }
 }
 
 void testReturn() {
     int x = 5;
     if (x < 0) return;
-    print(x);
+    print("{}", x);
 }

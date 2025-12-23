@@ -6,8 +6,8 @@
 //! - Member assignment: `obj.field = value`
 //! - Index assignment: `arr[i] = value`
 
-use angelscript_core::{CompilationError, DataType, Span, TypeHash};
-use angelscript_parser::ast::{AssignExpr, AssignOp, BinaryOp, Expr, MemberAccess};
+use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span, TypeHash};
+use angelscript_parser::ast::{AssignExpr, AssignOp, BinaryOp, Expr, MemberAccess, UnaryOp};
 
 use super::{ExprCompiler, Result};
 use crate::bytecode::OpCode;
@@ -16,7 +16,7 @@ use crate::operators::{OperatorResolution, resolve_binary};
 
 /// Compile an assignment expression.
 pub fn compile_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     assign: &AssignExpr<'ast>,
 ) -> Result<ExprInfo> {
     let span = assign.span;
@@ -29,7 +29,7 @@ pub fn compile_assign<'ast>(
 
 /// Compile a simple assignment (`a = b`).
 fn compile_simple_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     assign: &AssignExpr<'ast>,
     span: Span,
 ) -> Result<ExprInfo> {
@@ -85,7 +85,7 @@ fn compile_simple_assign<'ast>(
 /// 5. Emit value with type checking
 /// 6. Call set_opIndex
 fn compile_index_simple_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     index: &angelscript_parser::ast::IndexExpr<'ast>,
     value: &Expr<'ast>,
     span: Span,
@@ -113,7 +113,12 @@ fn compile_index_simple_assign<'ast>(
         })?;
 
     let class_name = class.qualified_name.clone();
-    let set_opindex_methods = class.find_methods("set_opIndex").to_vec();
+    // Look up set_opIndex from behaviors
+    let set_opindex_methods = class
+        .behaviors
+        .get_operator(OperatorBehavior::OpIndexSet)
+        .map(|v| v.to_vec())
+        .unwrap_or_default();
 
     if !set_opindex_methods.is_empty() {
         // IndexSetter style: set_opIndex(indices..., value)
@@ -172,37 +177,54 @@ fn compile_index_simple_assign<'ast>(
                 .ok_or_else(|| CompilationError::Internal {
                     message: "type not found".to_string(),
                 })?;
-            class.find_methods("opIndex").to_vec()
+            // Look up opIndex from behaviors
+            class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndex)
+                .map(|v| v.to_vec())
+                .unwrap_or_default()
         };
 
         if !op_index_methods.is_empty() {
             use crate::overload::resolve_overload;
-            let overload = resolve_overload(&op_index_methods, &index_types, compiler.ctx(), span)?;
+            // Filter to non-const methods for assignment (mutable opIndex)
+            let is_const_obj = obj_info.data_type.is_effectively_const();
+            let mutable_candidates: Vec<TypeHash> = op_index_methods
+                .iter()
+                .filter(|&&hash| {
+                    compiler
+                        .ctx()
+                        .get_function(hash)
+                        .is_some_and(|f| !f.def.is_const())
+                })
+                .copied()
+                .collect();
 
-            let func = compiler
-                .ctx()
-                .get_function(overload.func_hash)
-                .ok_or_else(|| CompilationError::Internal {
-                    message: format!("opIndex method not found: {:?}", overload.func_hash),
-                })?;
-
-            let return_type = func.def.return_type;
-            let is_const_method = func.def.traits.is_const;
-
-            if is_const_method {
+            if mutable_candidates.is_empty() {
                 return Err(CompilationError::CannotModifyConst {
                     message: format!("cannot assign via const opIndex on type '{}'", class_name),
                     span,
                 });
             }
 
-            let is_const_obj = obj_info.data_type.is_effectively_const();
             if is_const_obj {
                 return Err(CompilationError::CannotModifyConst {
                     message: "cannot assign to index on const object".to_string(),
                     span,
                 });
             }
+
+            let overload =
+                resolve_overload(&mutable_candidates, &index_types, compiler.ctx(), span)?;
+
+            let return_type = compiler
+                .ctx()
+                .get_function(overload.func_hash)
+                .ok_or_else(|| CompilationError::Internal {
+                    message: format!("opIndex method not found: {:?}", overload.func_hash),
+                })?
+                .def
+                .return_type;
 
             // Call opIndex to get reference
             // Stack: [obj, idx...] -> [ref]
@@ -233,7 +255,7 @@ fn compile_index_simple_assign<'ast>(
 
 /// Compile a compound assignment (`a += b`, etc.).
 fn compile_compound_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     assign: &AssignExpr<'ast>,
     span: Span,
 ) -> Result<ExprInfo> {
@@ -298,7 +320,7 @@ fn compile_compound_assign<'ast>(
 /// 6. Resolve set_opIndex with result type
 /// 7. Call set_opIndex
 fn compile_index_compound_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     index: &angelscript_parser::ast::IndexExpr<'ast>,
     op: AssignOp,
     value: &Expr<'ast>,
@@ -327,11 +349,16 @@ fn compile_index_compound_assign<'ast>(
         })?;
 
     let class_name = class.qualified_name.clone();
-    let set_opindex_methods = class.find_methods("set_opIndex").to_vec();
+    // Look up set_opIndex from behaviors
+    let set_opindex_methods = class
+        .behaviors
+        .get_operator(OperatorBehavior::OpIndexSet)
+        .map(|v| v.to_vec())
+        .unwrap_or_default();
 
     if !set_opindex_methods.is_empty() {
         // IndexSetter style: need getter first, then setter
-        // Find getter (get_opIndex or opIndex)
+        // Find getter (OpIndexGet or OpIndex from behaviors)
         let (getter_methods, getter_name) = {
             let class = compiler
                 .ctx()
@@ -341,11 +368,20 @@ fn compile_index_compound_assign<'ast>(
                     message: "type not found".to_string(),
                 })?;
 
-            let get_methods = class.find_methods("get_opIndex").to_vec();
+            let get_methods = class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndexGet)
+                .map(|v| v.to_vec())
+                .unwrap_or_default();
             if !get_methods.is_empty() {
                 (get_methods, "get_opIndex")
             } else {
-                (class.find_methods("opIndex").to_vec(), "opIndex")
+                let op_index = class
+                    .behaviors
+                    .get_operator(OperatorBehavior::OpIndex)
+                    .map(|v| v.to_vec())
+                    .unwrap_or_default();
+                (op_index, "opIndex")
             }
         };
 
@@ -448,7 +484,11 @@ fn compile_index_compound_assign<'ast>(
                 .ok_or_else(|| CompilationError::Internal {
                     message: "type not found".to_string(),
                 })?;
-            class.find_methods("opIndex").to_vec()
+            class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndex)
+                .map(|v| v.to_vec())
+                .unwrap_or_default()
         };
 
         if !op_index_methods.is_empty() {
@@ -578,7 +618,7 @@ enum AssignTargetKind {
 ///
 /// This function does NOT emit code for loading the target - it only analyzes it.
 fn analyze_assign_target<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     target: &Expr<'ast>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -586,6 +626,9 @@ fn analyze_assign_target<'ast>(
         Expr::Ident(ident) => analyze_ident_target(compiler, ident, span),
         Expr::Member(member) => analyze_member_target(compiler, member, span),
         Expr::Index(index) => analyze_index_target(compiler, index, span),
+        Expr::Unary(unary) if unary.op == UnaryOp::HandleOf => {
+            analyze_handle_assign_target(compiler, unary.operand, span)
+        }
         _ => Err(CompilationError::Other {
             message: "invalid assignment target".to_string(),
             span,
@@ -593,9 +636,35 @@ fn analyze_assign_target<'ast>(
     }
 }
 
+/// Analyze a handle assignment target (`@var = value`).
+///
+/// When the `@` operator is used on the left side of an assignment,
+/// it means we're assigning to the handle itself, not dereferencing it.
+/// The operand must be a valid assignment target that holds a handle type.
+fn analyze_handle_assign_target<'ast>(
+    compiler: &mut ExprCompiler<'_, '_>,
+    operand: &Expr<'ast>,
+    span: Span,
+) -> Result<AssignTarget> {
+    // Recursively analyze the operand (must be ident, member, or index)
+    let target = analyze_assign_target(compiler, operand, span)?;
+
+    // The target must be a handle type for @target = value to make sense
+    if !target.data_type.is_handle {
+        return Err(CompilationError::InvalidOperation {
+            message: "handle assignment (@) requires target to be a handle type".to_string(),
+            span,
+        });
+    }
+
+    // Return the same target - handle assignment works the same as regular assignment
+    // The @ on the left side just confirms we're assigning the handle, not dereferencing
+    Ok(target)
+}
+
 /// Analyze an identifier as an assignment target.
 fn analyze_ident_target(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     ident: &angelscript_parser::ast::IdentExpr<'_>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -645,6 +714,63 @@ fn analyze_ident_target(
         });
     }
 
+    // Check if we're inside a class and the identifier is a member field (implicit this.field)
+    if ident.scope.is_none()
+        && let Some(class_hash) = compiler.current_class()
+    {
+        // Extract field info before mutably borrowing compiler
+        let field_info = compiler
+            .ctx()
+            .get_type(class_hash)
+            .and_then(|e| e.as_class())
+            .and_then(|class| {
+                class
+                    .properties
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.name == name)
+                    .map(|(idx, p)| (idx, p.clone()))
+            });
+
+        if let Some((field_idx, property)) = field_info {
+            // Get 'this' const status from the declared parameter
+            let this_is_const = compiler
+                .ctx()
+                .get_local("this")
+                .map(|v| v.is_const)
+                .unwrap_or(false);
+
+            // TODO: Consider adding ImplicitThisField/ImplicitThisProperty target kinds
+            // to defer emission to emit_store, matching how analyze_member_target works
+            // with infer(). For now we emit GetThis here for consistency with Field handling.
+            compiler.emitter().emit_get_this();
+
+            if property.is_direct_field() {
+                return Ok(AssignTarget {
+                    data_type: property.data_type,
+                    is_mutable: !this_is_const,
+                    kind: AssignTargetKind::Field {
+                        field_index: field_idx as u16,
+                    },
+                });
+            } else if let Some(setter_hash) = property.setter {
+                return Ok(AssignTarget {
+                    data_type: property.data_type,
+                    is_mutable: !this_is_const,
+                    kind: AssignTargetKind::VirtualProperty {
+                        setter_hash,
+                        getter_hash: property.getter,
+                    },
+                });
+            } else {
+                return Err(CompilationError::CannotModifyConst {
+                    message: format!("property '{}' is read-only", name),
+                    span,
+                });
+            }
+        }
+    }
+
     Err(CompilationError::UndefinedVariable {
         name: qualified_name,
         span,
@@ -653,7 +779,7 @@ fn analyze_ident_target(
 
 /// Analyze a member access as an assignment target.
 fn analyze_member_target(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     member: &angelscript_parser::ast::MemberExpr<'_>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -725,7 +851,7 @@ fn analyze_member_target(
 
 /// Analyze an index expression as an assignment target.
 fn analyze_index_target(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     index: &angelscript_parser::ast::IndexExpr<'_>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -750,10 +876,14 @@ fn analyze_index_target(
                 span,
             })?;
 
-        (
-            class.find_methods("set_opIndex").to_vec(),
-            class.qualified_name.clone(),
-        )
+        // Look up set_opIndex from behaviors
+        let set_ops = class
+            .behaviors
+            .get_operator(OperatorBehavior::OpIndexSet)
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+
+        (set_ops, class.qualified_name.clone())
     };
 
     if !set_opindex_methods.is_empty() {
@@ -782,7 +912,7 @@ fn analyze_index_target(
             })?
         };
 
-        // Look for corresponding getter (get_opIndex or opIndex) for compound assignment
+        // Look for corresponding getter (OpIndexGet or OpIndex from behaviors) for compound assignment
         let getter_hash = {
             let class = compiler
                 .ctx()
@@ -792,16 +922,24 @@ fn analyze_index_target(
                     message: "type not found".to_string(),
                 })?;
 
-            // Try get_opIndex first, then opIndex
-            let get_opindex_methods = class.find_methods("get_opIndex");
-            let opindex_methods = class.find_methods("opIndex");
+            // Try OpIndexGet first, then OpIndex
+            let get_opindex_methods = class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndexGet)
+                .map(|v| v.to_vec())
+                .unwrap_or_default();
+            let opindex_methods = class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndex)
+                .map(|v| v.to_vec())
+                .unwrap_or_default();
 
             if !get_opindex_methods.is_empty() {
-                resolve_overload(get_opindex_methods, &index_types, compiler.ctx(), span)
+                resolve_overload(&get_opindex_methods, &index_types, compiler.ctx(), span)
                     .ok()
                     .map(|o| o.func_hash)
             } else if !opindex_methods.is_empty() {
-                resolve_overload(opindex_methods, &index_types, compiler.ctx(), span)
+                resolve_overload(&opindex_methods, &index_types, compiler.ctx(), span)
                     .ok()
                     .map(|o| o.func_hash)
             } else {
@@ -831,7 +969,11 @@ fn analyze_index_target(
                     message: "type not found".to_string(),
                 })?;
 
-            class.find_methods("opIndex").to_vec()
+            class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndex)
+                .map(|v| v.to_vec())
+                .unwrap_or_default()
         };
 
         if !op_index_methods.is_empty() {
@@ -883,11 +1025,7 @@ fn analyze_index_target(
 }
 
 /// Emit code to load the current value of a target (for compound assignment).
-fn emit_load(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
-    target: &AssignTarget,
-    span: Span,
-) -> Result<()> {
+fn emit_load(compiler: &mut ExprCompiler<'_, '_>, target: &AssignTarget, span: Span) -> Result<()> {
     match &target.kind {
         AssignTargetKind::Local { slot } => {
             compiler.emitter().emit_get_local(*slot);
@@ -974,7 +1112,7 @@ fn emit_load(
 }
 
 /// Emit code to store a value to a target.
-fn emit_store(compiler: &mut ExprCompiler<'_, '_, '_>, target: &AssignTarget) -> Result<()> {
+fn emit_store(compiler: &mut ExprCompiler<'_, '_>, target: &AssignTarget) -> Result<()> {
     match &target.kind {
         AssignTargetKind::Local { slot } => {
             compiler.emitter().emit_set_local(*slot);
@@ -1042,7 +1180,7 @@ fn compound_to_binary_op(op: AssignOp, _span: Span) -> Result<BinaryOp> {
 /// For reverse operators (MethodOnRight), we need to swap so the right
 /// operand becomes the receiver.
 fn emit_binary_op(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     resolution: &OperatorResolution,
     span: Span,
 ) -> Result<()> {
@@ -1110,7 +1248,8 @@ mod tests {
     use crate::emit::BytecodeEmitter;
     use angelscript_core::entries::{ClassEntry, FunctionEntry, PropertyEntry};
     use angelscript_core::{
-        FunctionDef, FunctionTraits, Param, Span, TypeKind, Visibility, primitives,
+        FunctionDef, FunctionTraits, OperatorBehavior, Param, Span, TypeKind, Visibility,
+        primitives,
     };
     use angelscript_parser::ast::{
         Expr, Ident, IdentExpr, IndexExpr, IndexItem, LiteralExpr, LiteralKind, MemberAccess,
@@ -1119,10 +1258,10 @@ mod tests {
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -1319,8 +1458,12 @@ mod tests {
         );
 
         let mut class = ClassEntry::ffi("IndexedContainer", TypeKind::script_object());
-        class.add_method("get_opIndex", getter_hash);
-        class.add_method("set_opIndex", setter_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpIndexGet, getter_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpIndexSet, setter_hash);
         registry.register_type(class.into()).unwrap();
 
         // Register get_opIndex method
@@ -1385,7 +1528,9 @@ mod tests {
         let opindex_hash = TypeHash::from_method(type_hash, "opIndex", &[primitives::INT32]);
 
         let mut class = ClassEntry::ffi("RefIndexedContainer", TypeKind::script_object());
-        class.add_method("opIndex", opindex_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpIndex, opindex_hash);
         registry.register_type(class.into()).unwrap();
 
         // Register opIndex method (non-const, returns reference)
@@ -1419,7 +1564,9 @@ mod tests {
         let opindex_hash = TypeHash::from_method(type_hash, "opIndex", &[primitives::INT32]);
 
         let mut class = ClassEntry::ffi("ConstIndexedContainer", TypeKind::script_object());
-        class.add_method("opIndex", opindex_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpIndex, opindex_hash);
         registry.register_type(class.into()).unwrap();
 
         // Register opIndex method (CONST - read-only)
@@ -1463,7 +1610,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -1484,7 +1632,7 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
         assert!(!info.is_lvalue); // Assignment returns rvalue
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: Constant, SetLocal
         chunk.assert_opcodes(&[OpCode::Constant, OpCode::SetLocal]);
     }
@@ -1504,7 +1652,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -1534,7 +1683,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_int_literal(&arena, 5); // rvalue - can't assign to this
@@ -1579,7 +1729,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -1599,12 +1750,12 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, Constant, AddI32, SetLocal
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::SetLocal,
         ]);
     }
@@ -1670,7 +1821,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "this");
@@ -1706,7 +1858,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "undefined_var");
@@ -1750,7 +1903,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -1771,7 +1925,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, Constant 42, CallMethod setter
         chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::Constant, OpCode::CallMethod]);
     }
@@ -1793,7 +1947,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -1814,14 +1969,14 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, Dup, CallMethod getter, Constant, AddI32, CallMethod setter
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
             OpCode::Dup,
             OpCode::CallMethod, // getter
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::CallMethod, // setter
         ]);
     }
@@ -1843,7 +1998,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -1884,7 +2040,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -1904,7 +2061,7 @@ mod tests {
         // Write-only properties can be assigned to
         assert!(result.is_ok());
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, Constant value, CallMethod setter
         chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::Constant, OpCode::CallMethod]);
     }
@@ -1926,7 +2083,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -1977,7 +2135,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -1999,7 +2158,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, PushZero index, Constant value, CallMethod setter
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2025,7 +2184,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2047,7 +2207,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, PushZero, Pick, Pick, CallMethod getter, Constant, AddI32, CallMethod setter
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2056,7 +2216,7 @@ mod tests {
             OpCode::Pick,
             OpCode::CallMethod, // getter
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::CallMethod, // setter
         ]);
     }
@@ -2081,7 +2241,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2103,7 +2264,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, PushZero, CallMethod opIndex (returns ref), Constant, Swap, SetField
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2131,7 +2292,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2153,7 +2315,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, PushZero, CallMethod opIndex, Dup, GetField, Constant, AddI32, Swap, SetField
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2162,7 +2324,7 @@ mod tests {
             OpCode::Dup,
             OpCode::GetField,
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::Swap,
             OpCode::SetField,
         ]);
@@ -2184,7 +2346,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2282,7 +2445,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -2303,7 +2467,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal provider, CallMethod getValue, SetLocal x
         chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::CallMethod, OpCode::SetLocal]);
     }
@@ -2332,7 +2496,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let container = make_ident_expr(&arena, "container");
@@ -2355,7 +2520,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, PushZero, GetLocal provider, CallMethod getValue, CallMethod set_opIndex
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2390,7 +2555,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let container = make_ident_expr(&arena, "container");
@@ -2412,7 +2578,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, GetLocal provider, CallMethod getValue, CallMethod set_value
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2445,7 +2611,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let container = make_ident_expr(&arena, "container");
@@ -2468,7 +2635,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, PushZero, CallMethod opIndex, GetLocal provider, CallMethod getValue, Swap, SetField
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2479,5 +2646,226 @@ mod tests {
             OpCode::Swap,
             OpCode::SetField,
         ]);
+    }
+
+    // =========================================================================
+    // Implicit this.field assignment tests
+    // =========================================================================
+
+    fn create_class_with_field(registry: &mut SymbolRegistry) -> TypeHash {
+        let class_hash = TypeHash::from_name("TestClass");
+
+        let mut class = ClassEntry::ffi("TestClass", TypeKind::script_object());
+        class.properties.push(PropertyEntry::field(
+            "x",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        ));
+        class.properties.push(PropertyEntry::field(
+            "y",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        ));
+        registry.register_type(class.into()).unwrap();
+
+        class_hash
+    }
+
+    fn create_test_compiler_with_class<'a, 'ctx>(
+        ctx: &'a mut CompilationContext<'ctx>,
+        emitter: &'a mut BytecodeEmitter,
+        current_class: TypeHash,
+    ) -> ExprCompiler<'a, 'ctx> {
+        ExprCompiler::new(ctx, emitter, Some(current_class))
+    }
+
+    #[test]
+    fn implicit_field_simple_assignment() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter (as methods do)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false, // mutable this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+        let target = make_ident_expr(&arena, "x");
+        let value = make_int_literal(&arena, 42);
+
+        let assign_expr = arena.alloc(AssignExpr {
+            target,
+            op: AssignOp::Assign,
+            value,
+            span: Span::new(1, 1, 6),
+        });
+
+        let mut compiler = create_test_compiler_with_class(&mut ctx, &mut emitter, class_hash);
+        let result = compile_assign(&mut compiler, assign_expr);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        let chunk = emitter.finish_chunk();
+        // Bytecode: GetThis, Constant 42, SetField
+        chunk.assert_opcodes(&[OpCode::GetThis, OpCode::Constant, OpCode::SetField]);
+    }
+
+    #[test]
+    fn implicit_field_compound_assignment() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter (as methods do)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false, // mutable this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+        let target = make_ident_expr(&arena, "x");
+        let value = make_int_literal(&arena, 5);
+
+        let assign_expr = arena.alloc(AssignExpr {
+            target,
+            op: AssignOp::AddAssign, // x += 5
+            value,
+            span: Span::new(1, 1, 6),
+        });
+
+        let mut compiler = create_test_compiler_with_class(&mut ctx, &mut emitter, class_hash);
+        let result = compile_assign(&mut compiler, assign_expr);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        let chunk = emitter.finish_chunk();
+        // Bytecode: GetThis, Dup, GetField, Constant, AddI32, SetField
+        chunk.assert_opcodes(&[
+            OpCode::GetThis,
+            OpCode::Dup,
+            OpCode::GetField,
+            OpCode::Constant,
+            OpCode::Add,
+            OpCode::SetField,
+        ]);
+    }
+
+    #[test]
+    fn implicit_field_assignment_const_method_rejected() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter as const (const method)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            true, // const this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+        let target = make_ident_expr(&arena, "x");
+        let value = make_int_literal(&arena, 42);
+
+        let assign_expr = arena.alloc(AssignExpr {
+            target,
+            op: AssignOp::Assign,
+            value,
+            span: Span::new(1, 1, 6),
+        });
+
+        let mut compiler = create_test_compiler_with_class(&mut ctx, &mut emitter, class_hash);
+        let result = compile_assign(&mut compiler, assign_expr);
+
+        // Should fail because we're in a const method
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::CannotModifyConst { .. }
+        ));
+    }
+
+    #[test]
+    fn implicit_field_local_takes_precedence_in_assignment() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false,
+            Span::default(),
+        );
+
+        // Also declare a local variable named 'x' that shadows the field
+        let _ = ctx.declare_local(
+            "x".to_string(),
+            DataType::simple(primitives::FLOAT),
+            false,
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+        let target = make_ident_expr(&arena, "x");
+        let value = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Float(42.0),
+            span: Span::new(1, 1, 4),
+        }));
+
+        let assign_expr = arena.alloc(AssignExpr {
+            target,
+            op: AssignOp::Assign,
+            value,
+            span: Span::new(1, 1, 10),
+        });
+
+        let mut compiler = create_test_compiler_with_class(&mut ctx, &mut emitter, class_hash);
+        let result = compile_assign(&mut compiler, assign_expr);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        // Should be float (local), not int (field)
+        assert_eq!(info.data_type.type_hash, primitives::FLOAT);
+
+        let chunk = emitter.finish_chunk();
+        // Should use Constant + SetLocal, not GetThis + Constant + SetField
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::SetLocal]);
     }
 }

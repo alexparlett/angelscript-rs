@@ -6,7 +6,7 @@
 //! - Method calls: `obj.method(args)`
 //! - Index access: `arr[i]` (via opIndex/get_opIndex/set_opIndex)
 
-use angelscript_core::{CompilationError, DataType, Span, TypeHash};
+use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span, TypeHash};
 use angelscript_parser::ast::{IndexExpr, MemberAccess, MemberExpr};
 
 use crate::expr_info::ExprInfo;
@@ -22,7 +22,7 @@ type Result<T> = std::result::Result<T, CompilationError>;
 /// - Field: direct field or property getter
 /// - Method: method call with arguments
 pub fn compile_member<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     member: &MemberExpr<'ast>,
 ) -> Result<ExprInfo> {
     // Compile the object expression first
@@ -44,7 +44,7 @@ pub fn compile_member<'ast>(
 /// - Emits GetField for direct fields
 /// - Calls the getter method for virtual properties
 fn compile_field_access(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     obj_type: &DataType,
     field_name: &str,
     span: Span,
@@ -124,7 +124,7 @@ fn compile_field_access(
 ///
 /// Note: set_opIndex is used during assignment compilation (Task 43).
 pub fn compile_index(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     index: &IndexExpr<'_>,
 ) -> Result<ExprInfo> {
     let span = index.span;
@@ -139,7 +139,8 @@ pub fn compile_index(
         index_types.push(info.data_type);
     }
 
-    // Check for opIndex methods (extract what we need to avoid borrow conflicts)
+    // Check for opIndex operators (extract what we need to avoid borrow conflicts)
+    // Use behaviors.get_operator for operator lookup (not methods map)
     let (op_index_methods, get_opindex_methods, class_name) = {
         let class = compiler
             .ctx()
@@ -150,11 +151,20 @@ pub fn compile_index(
                 span,
             })?;
 
-        (
-            class.find_methods("opIndex").to_vec(),
-            class.find_methods("get_opIndex").to_vec(),
-            class.qualified_name.clone(),
-        )
+        // Look up operators from behaviors
+        let op_index = class
+            .behaviors
+            .get_operator(OperatorBehavior::OpIndex)
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+
+        let get_opindex = class
+            .behaviors
+            .get_operator(OperatorBehavior::OpIndexGet)
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+
+        (op_index, get_opindex, class.qualified_name.clone())
     };
 
     // Try opIndex first (unified read/write)
@@ -190,36 +200,31 @@ pub fn compile_index(
 
 /// Compile opIndex access (returns lvalue for read/write).
 fn compile_opindex(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     obj_type: &DataType,
     candidates: &[TypeHash],
     index_types: &[DataType],
     span: Span,
 ) -> Result<ExprInfo> {
-    use crate::overload::resolve_overload;
+    use crate::overload::resolve_method_overload;
 
     let arg_count = index_types.len();
+    let is_const_obj = obj_type.is_effectively_const();
 
-    // Resolve overload with the index types as arguments
-    let overload = resolve_overload(candidates, index_types, compiler.ctx(), span)?;
+    // Resolve overload with const-correctness handling
+    let overload =
+        resolve_method_overload(candidates, index_types, compiler.ctx(), span, is_const_obj)?;
 
-    // Const-correctness check and get return type
-    let (is_const_method, return_type) = {
+    // Get return type
+    let return_type = {
         let func = compiler
             .ctx()
             .get_function(overload.func_hash)
             .ok_or_else(|| CompilationError::Internal {
                 message: format!("opIndex method not found: {:?}", overload.func_hash),
             })?;
-        (func.def.is_const(), func.def.return_type)
+        func.def.return_type
     };
-
-    if obj_type.is_effectively_const() && !is_const_method {
-        return Err(CompilationError::CannotModifyConst {
-            message: "cannot call non-const opIndex on const object".to_string(),
-            span,
-        });
-    }
 
     // Apply argument conversions
     for conv in overload.arg_conversions.iter().flatten() {
@@ -240,7 +245,7 @@ fn compile_opindex(
 
 /// Compile get_opIndex access (read-only, returns rvalue).
 fn compile_opindex_get(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     obj_type: &DataType,
     candidates: &[TypeHash],
     index_types: &[DataType],
@@ -358,7 +363,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -378,7 +384,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -398,7 +405,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -418,7 +426,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -516,7 +525,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -551,7 +561,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -587,7 +598,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -624,7 +636,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -658,7 +671,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -733,7 +747,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -754,7 +769,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);

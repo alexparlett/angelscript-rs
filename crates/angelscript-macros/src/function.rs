@@ -177,6 +177,9 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
                 }
             };
 
+            // Use is_const from #[param(const, ...)] on the parameter
+            let is_param_const = p.is_const;
+
             tokens.push(quote! {
                 ::angelscript_core::ParamMeta {
                     name: #name,
@@ -185,6 +188,7 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
                     template_param: #template_param,
                     if_handle_then_const: false,
                     ref_mode: #ref_mode_token,
+                    is_const: #is_param_const,
                 }
             });
         }
@@ -387,6 +391,8 @@ struct ParamInfo {
     is_mut_ref: bool,
     /// Whether the Rust type is `&T`
     is_ref: bool,
+    /// Whether the parameter is const (from `#[param(const)]`)
+    is_const: bool,
 }
 
 /// Extract parameter names, types, and defaults from function inputs.
@@ -429,6 +435,9 @@ fn extract_params(
                 let template_param = template_param
                     .or_else(|| param_attr.as_ref().and_then(|p| p.template_param.clone()));
 
+                // Get is_const from #[param(const)]
+                let is_const = param_attr.as_ref().map(|p| p.is_const).unwrap_or(false);
+
                 params.push(ParamInfo {
                     name,
                     ty: pat_type.ty.clone(),
@@ -437,6 +446,7 @@ fn extract_params(
                     ref_mode,
                     is_mut_ref,
                     is_ref,
+                    is_const,
                 });
             }
         }
@@ -617,6 +627,9 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
 
             let if_handle_then_const = p.if_handle_then_const;
 
+            // Use explicit is_const from #[param(const, ...)] attribute
+            let is_param_const = p.is_const;
+
             quote! {
                 ::angelscript_core::GenericParamMeta {
                     type_hash: #type_hash,
@@ -624,6 +637,7 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
                     is_variadic: #is_variadic,
                     default_value: #default_value,
                     if_handle_then_const: #if_handle_then_const,
+                    is_const: #is_param_const,
                 }
             }
         })
@@ -669,12 +683,19 @@ fn generate_return_meta(
             let is_const = attrs.is_const;
             let is_variable = attrs.is_variable;
 
+            // Template parameter name for return type substitution
+            let template_param = match &attrs.template_param {
+                Some(name) => quote! { Some(#name) },
+                None => quote! { None },
+            };
+
             quote! {
                 ::angelscript_core::ReturnMeta {
                     type_hash: #type_hash,
                     mode: #mode,
                     is_const: #is_const,
                     is_variable: #is_variable,
+                    template_param: #template_param,
                 }
             }
         }
@@ -688,6 +709,7 @@ fn generate_return_meta(
                         mode: ::angelscript_core::ReturnMode::Value,
                         is_const: false,
                         is_variable: false,
+                        template_param: None,
                     }
                 }
             } else {
@@ -698,6 +720,7 @@ fn generate_return_meta(
                             mode: ::angelscript_core::ReturnMode::Value,
                             is_const: false,
                             is_variable: false,
+                            template_param: None,
                         }
                     },
                     ReturnType::Type(_, ty) => quote! {
@@ -706,6 +729,7 @@ fn generate_return_meta(
                             mode: ::angelscript_core::ReturnMode::Value,
                             is_const: false,
                             is_variable: false,
+                            template_param: None,
                         }
                     },
                 }

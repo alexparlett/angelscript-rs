@@ -74,7 +74,7 @@ pub fn collect_field_inits<'ast>(
 /// For now, we skip these as they're default-initialized by the VM.
 pub fn compile_pre_base_inits(
     _ctx: &mut CompilationContext<'_>,
-    _emitter: &mut BytecodeEmitter<'_>,
+    _emitter: &mut BytecodeEmitter,
     _class_hash: TypeHash,
     _fields: &[FieldInit<'_>],
 ) -> Result<()> {
@@ -89,7 +89,7 @@ pub fn compile_pre_base_inits(
 /// These are fields WITH explicit initialization expressions.
 pub fn compile_post_base_inits<'ast>(
     ctx: &mut CompilationContext<'_>,
-    emitter: &mut BytecodeEmitter<'_>,
+    emitter: &mut BytecodeEmitter,
     class_hash: TypeHash,
     fields: &[FieldInit<'ast>],
 ) -> Result<()> {

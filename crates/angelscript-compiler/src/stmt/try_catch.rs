@@ -34,7 +34,7 @@ use crate::bytecode::OpCode;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a try-catch statement.
     ///
     /// The try block is compiled within an exception handler context.
@@ -60,10 +60,8 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         let try_exiting_vars = self.ctx.pop_local_scope();
         for var in &try_exiting_vars {
             if var.data_type.is_handle {
-                let release_hash =
-                    self.get_release_behavior(var.data_type.type_hash, try_catch.try_block.span)?;
                 self.emitter.emit_get_local(var.slot);
-                self.emitter.emit_release(release_hash);
+                self.emitter.emit_release();
             }
         }
 
@@ -88,10 +86,8 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         let catch_exiting_vars = self.ctx.pop_local_scope();
         for var in &catch_exiting_vars {
             if var.data_type.is_handle {
-                let release_hash =
-                    self.get_release_behavior(var.data_type.type_hash, try_catch.catch_block.span)?;
                 self.emitter.emit_get_local(var.slot);
-                self.emitter.emit_release(release_hash);
+                self.emitter.emit_release();
             }
         }
 
@@ -125,7 +121,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let try_catch = TryCatchStmt {
             try_block: Block {
@@ -142,7 +139,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_try_catch(&try_catch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
 
         // Bytecode layout:
         // TryBegin + offset(2) = 3 bytes (offset 0-2)
@@ -167,7 +164,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Create try block: { int x = 1; }
         let try_init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -228,7 +226,7 @@ mod tests {
         assert!(ctx.get_local("x").is_none());
         assert!(ctx.get_local("y").is_none());
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
 
         // Bytecode layout:
         // TryBegin + offset(2) = 3 bytes
@@ -253,7 +251,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Inner try-catch
         let inner_try_catch = arena.alloc(TryCatchStmt {
@@ -287,7 +286,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_try_catch(&outer_try_catch).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
 
         // Outer: TryBegin(3) + [inner](7) + TryEnd(1) + Jump(3) + (catch)(0) = 14 bytes
         assert_eq!(chunk.len(), 14);
@@ -317,7 +316,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Try block: Foo@ f; (default init to null - no AddRef needed)
         let try_vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -364,7 +364,7 @@ mod tests {
         assert!(ctx.get_local("f").is_none());
 
         // Verify Release was emitted for the handle when exiting try scope
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         let mut found_release = false;
         for i in 0..chunk.len() {
             if chunk.read_op(i) == Some(OpCode::Release) {

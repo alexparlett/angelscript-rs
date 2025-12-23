@@ -54,8 +54,8 @@ pub fn as_get_exception_info(_ctx: &mut CallContext) -> Result<(), NativeError> 
 /// Print formatted string to stdout without newline.
 /// Usage: `print("Hello {}", name)`
 #[angelscript_macros::function(generic, name = "print")]
-#[param(type = ScriptString, in)]
-#[param(variable, in, variadic)]
+#[param(type = ScriptString, const, in)]
+#[param(variable, const, in, variadic)]
 pub fn as_print(_ctx: &mut CallContext) -> Result<(), NativeError> {
     todo!()
 }
@@ -63,8 +63,8 @@ pub fn as_print(_ctx: &mut CallContext) -> Result<(), NativeError> {
 /// Print formatted string to stdout with newline.
 /// Usage: `println("Hello {}", name)`
 #[angelscript_macros::function(generic, name = "println")]
-#[param(type = ScriptString, in)]
-#[param(variable, in, variadic)]
+#[param(type = ScriptString, const, in)]
+#[param(variable, const, in, variadic)]
 pub fn as_println(_ctx: &mut CallContext) -> Result<(), NativeError> {
     todo!()
 }
@@ -72,8 +72,8 @@ pub fn as_println(_ctx: &mut CallContext) -> Result<(), NativeError> {
 /// Print formatted string to stderr without newline.
 /// Usage: `eprint("Error: {}", msg)`
 #[angelscript_macros::function(generic, name = "eprint")]
-#[param(type = ScriptString, in)]
-#[param(variable, in, variadic)]
+#[param(type = ScriptString, const, in)]
+#[param(variable, const, in, variadic)]
 pub fn as_eprint(_ctx: &mut CallContext) -> Result<(), NativeError> {
     todo!()
 }
@@ -81,8 +81,8 @@ pub fn as_eprint(_ctx: &mut CallContext) -> Result<(), NativeError> {
 /// Print formatted string to stderr with newline.
 /// Usage: `eprintln("Error: {}", msg)`
 #[angelscript_macros::function(generic, name = "eprintln")]
-#[param(type = ScriptString, in)]
-#[param(variable, in, variadic)]
+#[param(type = ScriptString, const, in)]
+#[param(variable, const, in, variadic)]
 pub fn as_eprintln(_ctx: &mut CallContext) -> Result<(), NativeError> {
     todo!()
 }

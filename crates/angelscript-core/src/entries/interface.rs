@@ -20,8 +20,9 @@ pub struct ITable {
     /// Maps method name to itable slots for overload resolution.
     /// A single name may have multiple slots (one per overload).
     pub slots_by_name: FxHashMap<String, Vec<u16>>,
-    /// Total number of slots.
-    slot_count: u16,
+    /// Method function hashes in slot order (for overload resolution).
+    /// These are the abstract interface method hashes registered during compilation.
+    pub methods: Vec<TypeHash>,
 }
 
 impl ITable {
@@ -43,27 +44,40 @@ impl ITable {
             .unwrap_or(&[])
     }
 
+    /// Get the method function hash at a given slot.
+    pub fn method_at(&self, slot: u16) -> Option<TypeHash> {
+        self.methods.get(slot as usize).copied()
+    }
+
     /// Check if the itable is empty.
     pub fn is_empty(&self) -> bool {
-        self.slot_count == 0
+        self.methods.is_empty()
     }
 
     /// Get the total number of slots.
     pub fn len(&self) -> u16 {
-        self.slot_count
+        self.methods.len() as u16
     }
 
     /// Add a method to the itable.
     /// Returns the slot index assigned to the method.
-    pub fn add_method(&mut self, name: &str, sig_hash: u64) -> u16 {
-        let slot = self.slot_count;
-        self.slot_count += 1;
+    pub fn add_method(&mut self, name: &str, sig_hash: u64, func_hash: TypeHash) -> u16 {
+        let slot = self.methods.len() as u16;
+        self.methods.push(func_hash);
         self.index.insert(sig_hash, slot);
         self.slots_by_name
             .entry(name.to_string())
             .or_default()
             .push(slot);
         slot
+    }
+
+    /// Find all method function hashes by name (for overload resolution).
+    pub fn find_methods(&self, name: &str) -> Vec<TypeHash> {
+        self.slots_for_name(name)
+            .iter()
+            .filter_map(|&slot| self.method_at(slot))
+            .collect()
     }
 }
 
@@ -263,19 +277,23 @@ mod tests {
     fn itable_add_method_creates_slot() {
         let mut itable = ITable::new();
         let sig_hash = 12345u64;
+        let func_hash = TypeHash::from_name("draw");
 
-        let slot = itable.add_method("draw", sig_hash);
+        let slot = itable.add_method("draw", sig_hash, func_hash);
 
         assert_eq!(slot, 0);
         assert_eq!(itable.len(), 1);
+        assert_eq!(itable.method_at(0), Some(func_hash));
     }
 
     #[test]
     fn itable_add_multiple_methods() {
         let mut itable = ITable::new();
+        let draw_hash = TypeHash::from_name("draw");
+        let update_hash = TypeHash::from_name("update");
 
-        let slot1 = itable.add_method("draw", 111);
-        let slot2 = itable.add_method("update", 222);
+        let slot1 = itable.add_method("draw", 111, draw_hash);
+        let slot2 = itable.add_method("update", 222, update_hash);
 
         assert_eq!(slot1, 0);
         assert_eq!(slot2, 1);
@@ -285,11 +303,14 @@ mod tests {
     #[test]
     fn itable_slots_by_name() {
         let mut itable = ITable::new();
+        let draw1_hash = TypeHash::from_name("draw1");
+        let draw2_hash = TypeHash::from_name("draw2");
+        let update_hash = TypeHash::from_name("update");
 
         // Two overloads of "draw"
-        itable.add_method("draw", 111);
-        itable.add_method("draw", 222);
-        itable.add_method("update", 333);
+        itable.add_method("draw", 111, draw1_hash);
+        itable.add_method("draw", 222, draw2_hash);
+        itable.add_method("update", 333, update_hash);
 
         let draw_slots = itable.slots_for_name("draw");
         assert_eq!(draw_slots.len(), 2);
@@ -305,8 +326,9 @@ mod tests {
     fn itable_slot_by_signature() {
         let mut itable = ITable::new();
         let sig_hash = 12345u64;
+        let func_hash = TypeHash::from_name("draw");
 
-        itable.add_method("draw", sig_hash);
+        itable.add_method("draw", sig_hash, func_hash);
 
         assert_eq!(itable.slot_by_signature(sig_hash), Some(0));
         assert_eq!(itable.slot_by_signature(99999), None);
@@ -315,10 +337,12 @@ mod tests {
     #[test]
     fn itable_overload_different_signatures() {
         let mut itable = ITable::new();
+        let foo1_hash = TypeHash::from_name("foo1");
+        let foo2_hash = TypeHash::from_name("foo2");
 
         // Same name, different signatures (different overloads)
-        let slot1 = itable.add_method("foo", 111);
-        let slot2 = itable.add_method("foo", 222);
+        let slot1 = itable.add_method("foo", 111, foo1_hash);
+        let slot2 = itable.add_method("foo", 222, foo2_hash);
 
         assert_ne!(slot1, slot2);
         assert_eq!(itable.len(), 2);

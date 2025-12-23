@@ -10,7 +10,7 @@ use crate::bytecode::OpCode;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a do-while loop.
     ///
     /// The body executes first, then the condition is checked. If true,
@@ -100,7 +100,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // do {} while (false);
         let body = arena.alloc(Stmt::Block(Block {
@@ -122,7 +123,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_do_while(&do_while).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // (empty body)
         // PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes
@@ -142,7 +143,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // do {} while (true); - infinite loop
         let body = arena.alloc(Stmt::Block(Block {
@@ -164,7 +166,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_do_while(&do_while).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: PushTrue(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes
         assert_eq!(chunk.len(), 9);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
@@ -181,7 +183,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // do { break; } while (true);
         let break_stmt = Stmt::Break(BreakStmt {
@@ -208,7 +211,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_do_while(&do_while).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: Jump(3, break) + PushTrue(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 12
         assert_eq!(chunk.len(), 12);
         assert_eq!(chunk.read_op(0), Some(OpCode::Jump)); // break
@@ -225,7 +228,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // do { continue; } while (false);
         let continue_stmt = Stmt::Continue(ContinueStmt {
@@ -252,7 +256,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_do_while(&do_while).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: Jump(3, continue - forward to condition) + PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 12
         assert_eq!(chunk.len(), 12);
         // Continue is a forward Jump (patched to condition) since continue target is deferred
@@ -272,7 +276,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // do {} while (42); - should fail
         let body = arena.alloc(Stmt::Block(Block {
@@ -309,7 +314,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Inner do-while
         let inner_body = arena.alloc(Stmt::Block(Block {
@@ -349,7 +355,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_do_while(&outer_do_while).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Inner: PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes
         // Outer: (inner 9) + PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 18 bytes
         assert_eq!(chunk.len(), 18);

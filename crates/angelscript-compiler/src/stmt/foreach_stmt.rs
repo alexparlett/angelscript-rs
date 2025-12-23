@@ -10,7 +10,7 @@ use crate::type_resolver::TypeResolver;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a foreach loop.
     ///
     /// Foreach loops iterate over collections that implement the opFor* behaviors:
@@ -194,9 +194,8 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         let exiting_vars = self.ctx.pop_local_scope();
         for var in exiting_vars {
             if var.data_type.is_handle {
-                let release = self.get_release_behavior(var.data_type.type_hash, span)?;
                 self.emitter.emit_get_local(var.slot);
-                self.emitter.emit_release(release);
+                self.emitter.emit_release();
             }
         }
 
@@ -392,7 +391,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // foreach (int x : 42) {} - should fail (int is not iterable)
         let vars = arena.alloc_slice_copy(&[angelscript_parser::ast::ForeachVar {

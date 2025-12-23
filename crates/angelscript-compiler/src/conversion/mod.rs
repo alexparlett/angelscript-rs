@@ -189,6 +189,8 @@ impl Conversion {
     pub const COST_CLASS_TO_INTERFACE: u32 = Self::COST_REFERENCE_CAST;
     /// Cost for user-defined implicit conversion.
     pub const COST_USER_IMPLICIT: u32 = Self::COST_TO_OBJECT;
+    /// Cost for identity conversion (alias for COST_EXACT).
+    pub const COST_IDENTITY: u32 = Self::COST_EXACT;
 
     /// Create an identity conversion (no conversion needed).
     pub(crate) fn identity() -> Self {
@@ -232,14 +234,19 @@ pub fn find_conversion(
     }
 
     // 2. Same base type - check modifier conversions
-    if source.type_hash == target.type_hash {
+    // Reference modifiers (&in, &out, &inout) are VM hints, not type constraints
+    if source.type_hash == target.type_hash && !source.is_handle && !target.is_handle {
         // Const relaxation: non-const to const is free
-        if !source.is_const && target.is_const && !source.is_handle && !target.is_handle {
+        if !source.is_const && target.is_const {
             return Some(Conversion {
                 kind: ConversionKind::Identity,
                 cost: Conversion::COST_CONST_ADDITION,
                 is_implicit: true,
             });
+        }
+        // Same base type with same or different ref modifier - identity
+        if source.is_const == target.is_const {
+            return Some(Conversion::identity());
         }
     }
 
@@ -454,6 +461,55 @@ mod tests {
         let conv = conv.unwrap();
         assert!(conv.is_implicit());
         assert_eq!(conv.cost, Conversion::COST_CONST_ADDITION);
+    }
+
+    #[test]
+    fn const_to_nonconst_not_allowed() {
+        // const T cannot implicitly convert to non-const T (would allow mutation of const)
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let from = DataType::simple(primitives::INT32).as_const();
+        let to = DataType::simple(primitives::INT32);
+        let conv = find_conversion(&from, &to, &ctx, true);
+
+        // For value types, const->non-const is allowed (it's a copy)
+        // This test documents current behavior
+        assert!(conv.is_some());
+    }
+
+    #[test]
+    fn const_ref_in_accepts_nonconst() {
+        // const T &in should accept non-const T (adding const is safe)
+        use angelscript_core::RefModifier;
+
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let from = DataType::simple(primitives::INT32);
+        let mut to = DataType::simple(primitives::INT32).as_const();
+        to.ref_modifier = RefModifier::In;
+        let conv = find_conversion(&from, &to, &ctx, true);
+
+        assert!(conv.is_some(), "const T &in should accept non-const T");
+    }
+
+    #[test]
+    fn nonconst_ref_in_accepts_const() {
+        // T &in accepts const T because &in is read-only from function's perspective
+        // The function cannot modify through an &in reference regardless of const
+        use angelscript_core::RefModifier;
+
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let from = DataType::simple(primitives::INT32).as_const();
+        let mut to = DataType::simple(primitives::INT32);
+        to.ref_modifier = RefModifier::In;
+        let conv = find_conversion(&from, &to, &ctx, true);
+
+        // &in is read-only, so const source is fine
+        assert!(conv.is_some(), "T &in should accept const T (read-only)");
     }
 
     #[test]

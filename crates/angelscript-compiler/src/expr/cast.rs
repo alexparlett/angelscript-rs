@@ -18,8 +18,8 @@
 use angelscript_core::{CompilationError, TypeHash};
 use angelscript_parser::ast::CastExpr;
 
-use super::{ExprCompiler, Result};
-use crate::conversion::find_cast;
+use super::{ExprCompiler, Result, emit_conversion};
+use crate::conversion::{find_cast, find_primitive_conversion};
 use crate::expr_info::ExprInfo;
 use crate::type_resolver::TypeResolver;
 
@@ -31,7 +31,7 @@ use crate::type_resolver::TypeResolver;
 /// - Interface casts (class to implemented interface)
 /// - User-defined casts via `opCast`/`opImplCast` methods
 pub fn compile_cast<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &CastExpr<'ast>,
 ) -> Result<ExprInfo> {
     let span = expr.span;
@@ -52,15 +52,25 @@ pub fn compile_cast<'ast>(
         return Ok(ExprInfo::rvalue(target_type));
     }
 
-    // 4. Handle casts only work between handle types
+    // 4. Primitive conversions (int -> float, float -> int, etc.)
+    // This handles explicit Type(expr) syntax for primitives
+    if source_type.is_primitive()
+        && target_type.is_primitive()
+        && let Some(conv) = find_primitive_conversion(source_type, &target_type)
+    {
+        emit_conversion(compiler.emitter(), &conv);
+        return Ok(ExprInfo::rvalue(target_type));
+    }
+
+    // 5. Handle casts only work between handle types
     if source_type.is_handle && target_type.is_handle {
-        // 4a. Try hierarchy casts (derived to base, base to derived, interface)
+        // 5a. Try hierarchy casts (derived to base, base to derived, interface)
         if let Some(()) = try_hierarchy_cast(source_type.type_hash, target_type.type_hash, compiler)
         {
             return Ok(ExprInfo::rvalue(target_type));
         }
 
-        // 4b. Try user-defined cast operators (opCast, opImplCast)
+        // 5b. Try user-defined cast operators (opCast, opImplCast)
         if let Some((method_hash, _is_implicit)) =
             find_cast(source_type, &target_type, compiler.ctx())
         {
@@ -70,7 +80,7 @@ pub fn compile_cast<'ast>(
         }
     }
 
-    // 5. No valid cast found
+    // 6. No valid cast found
     Err(CompilationError::InvalidCast {
         from: compiler
             .ctx()
@@ -97,7 +107,7 @@ pub fn compile_cast<'ast>(
 fn try_hierarchy_cast(
     source_hash: TypeHash,
     target_hash: TypeHash,
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
 ) -> Option<()> {
     let ctx = compiler.ctx();
 
@@ -138,10 +148,10 @@ mod tests {
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -181,7 +191,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -242,7 +253,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -302,7 +314,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -393,7 +406,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -484,7 +498,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -520,5 +535,326 @@ mod tests {
         // Result should be MyObjC@
         assert_eq!(info.data_type.type_hash, obj_c_hash);
         assert!(info.data_type.is_handle);
+    }
+
+    // =========================================================================
+    // Primitive type conversion tests (int(expr), float(expr) syntax)
+    // =========================================================================
+
+    #[test]
+    fn cast_float_to_int_primitive() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a variable of type float
+        ctx.declare_local(
+            "f".to_string(),
+            DataType::simple(primitives::FLOAT),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create cast<int>(f) expression - int(f) syntax
+        let target_type = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("int", Span::new(1, 6, 3))),
+            &[],
+            &[],
+            Span::new(1, 6, 3),
+        );
+
+        let f_ident = make_ident_expr(&arena, "f", Span::new(1, 11, 1));
+
+        let cast_expr = CastExpr {
+            target_type,
+            expr: f_ident,
+            span: Span::new(1, 1, 13),
+        };
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_cast(&mut compiler, &cast_expr);
+
+        assert!(
+            result.is_ok(),
+            "float to int cast should succeed: {:?}",
+            result
+        );
+        let info = result.unwrap();
+
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+        assert!(!info.is_lvalue);
+    }
+
+    #[test]
+    fn cast_int_to_float_primitive() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a variable of type int
+        ctx.declare_local(
+            "i".to_string(),
+            DataType::simple(primitives::INT32),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create cast<float>(i) expression - float(i) syntax
+        let target_type = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("float", Span::new(1, 6, 5))),
+            &[],
+            &[],
+            Span::new(1, 6, 5),
+        );
+
+        let i_ident = make_ident_expr(&arena, "i", Span::new(1, 13, 1));
+
+        let cast_expr = CastExpr {
+            target_type,
+            expr: i_ident,
+            span: Span::new(1, 1, 15),
+        };
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_cast(&mut compiler, &cast_expr);
+
+        assert!(
+            result.is_ok(),
+            "int to float cast should succeed: {:?}",
+            result
+        );
+        let info = result.unwrap();
+
+        assert_eq!(info.data_type.type_hash, primitives::FLOAT);
+        assert!(!info.is_lvalue);
+    }
+
+    #[test]
+    fn cast_double_to_int_primitive() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a variable of type double
+        ctx.declare_local(
+            "d".to_string(),
+            DataType::simple(primitives::DOUBLE),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create cast<int>(d) expression
+        let target_type = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("int", Span::new(1, 6, 3))),
+            &[],
+            &[],
+            Span::new(1, 6, 3),
+        );
+
+        let d_ident = make_ident_expr(&arena, "d", Span::new(1, 11, 1));
+
+        let cast_expr = CastExpr {
+            target_type,
+            expr: d_ident,
+            span: Span::new(1, 1, 13),
+        };
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_cast(&mut compiler, &cast_expr);
+
+        assert!(
+            result.is_ok(),
+            "double to int cast should succeed: {:?}",
+            result
+        );
+        let info = result.unwrap();
+
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn cast_int_to_int64_primitive() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a variable of type int
+        ctx.declare_local(
+            "i".to_string(),
+            DataType::simple(primitives::INT32),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create cast<int64>(i) expression - integer widening
+        let target_type = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("int64", Span::new(1, 6, 5))),
+            &[],
+            &[],
+            Span::new(1, 6, 5),
+        );
+
+        let i_ident = make_ident_expr(&arena, "i", Span::new(1, 13, 1));
+
+        let cast_expr = CastExpr {
+            target_type,
+            expr: i_ident,
+            span: Span::new(1, 1, 15),
+        };
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_cast(&mut compiler, &cast_expr);
+
+        assert!(
+            result.is_ok(),
+            "int to int64 cast should succeed: {:?}",
+            result
+        );
+        let info = result.unwrap();
+
+        assert_eq!(info.data_type.type_hash, primitives::INT64);
+    }
+
+    #[test]
+    fn cast_uint_to_int_primitive() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a variable of type uint
+        ctx.declare_local(
+            "u".to_string(),
+            DataType::simple(primitives::UINT32),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create cast<int>(u) expression - sign change
+        let target_type = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("int", Span::new(1, 6, 3))),
+            &[],
+            &[],
+            Span::new(1, 6, 3),
+        );
+
+        let u_ident = make_ident_expr(&arena, "u", Span::new(1, 11, 1));
+
+        let cast_expr = CastExpr {
+            target_type,
+            expr: u_ident,
+            span: Span::new(1, 1, 13),
+        };
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_cast(&mut compiler, &cast_expr);
+
+        assert!(
+            result.is_ok(),
+            "uint to int cast should succeed: {:?}",
+            result
+        );
+        let info = result.unwrap();
+
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn cast_identity_primitive_same_type() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a variable of type int
+        ctx.declare_local(
+            "i".to_string(),
+            DataType::simple(primitives::INT32),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create cast<int>(i) expression - identity cast
+        let target_type = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("int", Span::new(1, 6, 3))),
+            &[],
+            &[],
+            Span::new(1, 6, 3),
+        );
+
+        let i_ident = make_ident_expr(&arena, "i", Span::new(1, 11, 1));
+
+        let cast_expr = CastExpr {
+            target_type,
+            expr: i_ident,
+            span: Span::new(1, 1, 13),
+        };
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_cast(&mut compiler, &cast_expr);
+
+        // Identity cast should succeed (handled at step 3)
+        assert!(result.is_ok(), "identity cast should succeed: {:?}", result);
+        let info = result.unwrap();
+
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
     }
 }

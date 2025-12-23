@@ -112,6 +112,10 @@ pub struct DataType {
     /// Whether this type is an interface (can only be used as handle).
     /// Set during type resolution when the underlying type is an interface.
     pub is_interface: bool,
+
+    /// Whether this type is an enum (integer under the hood).
+    /// Set during type resolution when the underlying type is an enum.
+    pub is_enum: bool,
 }
 
 impl DataType {
@@ -136,6 +140,7 @@ impl DataType {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         }
     }
 
@@ -160,6 +165,7 @@ impl DataType {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         }
     }
 
@@ -202,6 +208,7 @@ impl DataType {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         }
     }
 
@@ -242,6 +249,7 @@ impl DataType {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         }
     }
 
@@ -267,6 +275,7 @@ impl DataType {
             ref_modifier: RefModifier::In,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         }
     }
 
@@ -293,6 +302,7 @@ impl DataType {
             ref_modifier: RefModifier::Out,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         }
     }
 
@@ -319,6 +329,7 @@ impl DataType {
             ref_modifier: RefModifier::InOut,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         }
     }
 
@@ -857,6 +868,7 @@ mod tests {
             ref_modifier: RefModifier::In,
             is_interface: false,
             is_mixin: false,
+            is_enum: false,
         };
 
         assert_ne!(plain.signature_hash(), const_ref_in.signature_hash());

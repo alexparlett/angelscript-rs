@@ -75,8 +75,9 @@ pub struct CompilationContext<'a> {
     /// Template instance cache for avoiding duplicate instantiation
     template_cache: TemplateInstanceCache,
 
-    /// Local scope for function compilation (None when not in a function)
-    local_scope: Option<LocalScope>,
+    /// Stack of local scopes for nested function compilation (e.g., lambdas).
+    /// Empty when not in a function. Top of stack is the current function's scope.
+    local_scope_stack: Vec<LocalScope>,
 
     /// String type hash from the string factory (None if not configured)
     string_type_hash: Option<TypeHash>,
@@ -92,7 +93,7 @@ impl<'a> CompilationContext<'a> {
             imports: Vec::new(),
             errors: Vec::new(),
             template_cache: TemplateInstanceCache::new(),
-            local_scope: None,
+            local_scope_stack: Vec::new(),
             string_type_hash: None,
         }
     }
@@ -168,6 +169,13 @@ impl<'a> CompilationContext<'a> {
             || self.global_registry.get_global(hash).is_some()
     }
 
+    /// Get a type alias by qualified name from either registry.
+    fn get_type_alias(&self, qualified_name: &str) -> Option<TypeHash> {
+        self.unit_registry
+            .get_type_alias(qualified_name)
+            .or_else(|| self.global_registry.get_type_alias(qualified_name))
+    }
+
     /// Resolve a type name to its hash using try-combinations.
     ///
     /// Resolution order:
@@ -183,10 +191,11 @@ impl<'a> CompilationContext<'a> {
     /// Resolve a type name with ambiguity checking.
     ///
     /// Resolution order:
-    /// 1. If already qualified (contains `::`), try direct lookup
+    /// 1. If already qualified (contains `::`), try direct lookup (types, then aliases)
     /// 2. Try current namespace hierarchy (innermost to outermost, NOT global)
     /// 3. Try imports - collect all matches, error if ambiguous
     /// 4. Fall back to global namespace
+    /// 5. Check type aliases with the same resolution order
     ///
     /// Returns `Err` with an ambiguity error if the name matches in multiple imports.
     /// Returns `Ok(None)` if not found, `Ok(Some(hash))` if found unambiguously.
@@ -196,6 +205,10 @@ impl<'a> CompilationContext<'a> {
             let hash = TypeHash::from_name(name);
             if self.type_exists(hash) {
                 return Ok(Some(hash));
+            }
+            // Also check qualified type aliases
+            if let Some(target_hash) = self.get_type_alias(name) {
+                return Ok(Some(target_hash));
             }
             return Ok(None);
         }
@@ -208,6 +221,10 @@ impl<'a> CompilationContext<'a> {
             let hash = TypeHash::from_name(&qualified);
             if self.type_exists(hash) {
                 return Ok(Some(hash));
+            }
+            // Check type aliases in this namespace
+            if let Some(target_hash) = self.get_type_alias(&qualified) {
+                return Ok(Some(target_hash));
             }
         }
 
@@ -228,7 +245,22 @@ impl<'a> CompilationContext<'a> {
                         });
                     }
                 } else {
-                    found = Some((hash, qualified));
+                    found = Some((hash, qualified.clone()));
+                }
+            }
+            // Also check type aliases in imports
+            if let Some(target_hash) = self.get_type_alias(&qualified) {
+                if let Some((existing_hash, ref existing_qualified)) = found {
+                    if existing_hash != target_hash {
+                        return Err(CompilationError::AmbiguousSymbol {
+                            kind: "type".to_string(),
+                            name: name.to_string(),
+                            candidates: format!("{}, {}", existing_qualified, qualified),
+                            span: Span::default(),
+                        });
+                    }
+                } else {
+                    found = Some((target_hash, qualified));
                 }
             }
         }
@@ -241,6 +273,11 @@ impl<'a> CompilationContext<'a> {
         let hash = TypeHash::from_name(name);
         if self.type_exists(hash) {
             return Ok(Some(hash));
+        }
+
+        // 5. Check type aliases in global namespace
+        if let Some(target_hash) = self.get_type_alias(name) {
+            return Ok(Some(target_hash));
         }
 
         Ok(None)
@@ -494,24 +531,59 @@ impl<'a> CompilationContext<'a> {
 
     /// Find all callable methods on a type by name, including inherited.
     ///
-    /// Uses the vtable for lookup, which contains all methods (own + inherited).
-    /// This is the method to use for overload resolution at call sites.
-    pub fn find_methods(&self, type_hash: TypeHash, name: &str) -> Vec<TypeHash> {
-        // Check type in unit registry first
-        if let Some(class) = self.unit_registry.get(type_hash).and_then(|e| e.as_class()) {
-            return class.find_callable_methods(name);
+    /// Uses the vtable for lookup for classes (which contains all methods own + inherited),
+    /// and the itable for interfaces.
+    ///
+    /// If `is_const_object` is true, only returns const methods (callable on const objects).
+    /// If `is_const_object` is false, returns all methods.
+    pub fn find_methods(
+        &self,
+        type_hash: TypeHash,
+        name: &str,
+        is_const_object: bool,
+    ) -> Vec<TypeHash> {
+        let candidates = {
+            // Check class in unit registry first
+            if let Some(class) = self.unit_registry.get(type_hash).and_then(|e| e.as_class()) {
+                class.find_callable_methods(name)
+            }
+            // Check class in global registry
+            else if let Some(class) = self
+                .global_registry
+                .get(type_hash)
+                .and_then(|e| e.as_class())
+            {
+                class.find_callable_methods(name)
+            }
+            // Check interface in unit registry
+            else if let Some(iface) = self
+                .unit_registry
+                .get(type_hash)
+                .and_then(|e| e.as_interface())
+            {
+                iface.itable.find_methods(name)
+            }
+            // Check interface in global registry
+            else if let Some(iface) = self
+                .global_registry
+                .get(type_hash)
+                .and_then(|e| e.as_interface())
+            {
+                iface.itable.find_methods(name)
+            } else {
+                return Vec::new();
+            }
+        };
+
+        if !is_const_object {
+            return candidates;
         }
 
-        // Check type in global registry
-        if let Some(class) = self
-            .global_registry
-            .get(type_hash)
-            .and_then(|e| e.as_class())
-        {
-            return class.find_callable_methods(name);
-        }
-
-        Vec::new()
+        // Filter to only const methods for const objects
+        candidates
+            .into_iter()
+            .filter(|&hash| self.get_function(hash).is_some_and(|f| f.def.is_const()))
+            .collect()
     }
 
     /// Check if `derived` is derived from `base` in the class hierarchy.
@@ -586,29 +658,38 @@ impl<'a> CompilationContext<'a> {
     // Local Scope Management (for function compilation)
     // ========================================================================
 
-    /// Begin compiling a function - creates a new local scope.
+    /// Begin compiling a function - pushes a new local scope onto the stack.
+    ///
+    /// This supports nested function compilation (e.g., lambdas inside functions).
     pub fn begin_function(&mut self) {
-        self.local_scope = Some(LocalScope::new());
+        self.local_scope_stack.push(LocalScope::new());
     }
 
-    /// End function compilation - returns the local scope with frame info.
+    /// End function compilation - pops and returns the current local scope.
     ///
     /// Returns `None` if not in a function.
     pub fn end_function(&mut self) -> Option<LocalScope> {
-        self.local_scope.take()
+        self.local_scope_stack.pop()
     }
 
     /// Check if currently compiling a function.
     pub fn in_function(&self) -> bool {
-        self.local_scope.is_some()
+        !self.local_scope_stack.is_empty()
+    }
+
+    /// Get the current function scope nesting depth.
+    ///
+    /// Returns 0 if not in a function, 1 for top-level function, 2+ for nested lambdas.
+    pub fn function_depth(&self) -> usize {
+        self.local_scope_stack.len()
     }
 
     /// Enter a nested block scope (if body, loop body, etc.).
     ///
     /// Panics if not in a function.
     pub fn push_local_scope(&mut self) {
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("push_local_scope called outside function")
             .push_scope();
     }
@@ -618,8 +699,8 @@ impl<'a> CompilationContext<'a> {
     /// Returns the variables that went out of scope, for cleanup bytecode emission.
     /// Panics if not in a function.
     pub fn pop_local_scope(&mut self) -> Vec<crate::scope::LocalVar> {
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("pop_local_scope called outside function")
             .pop_scope()
     }
@@ -638,8 +719,8 @@ impl<'a> CompilationContext<'a> {
         // Validate type is instantiable (not a mixin)
         self.validate_instantiable_type(&data_type, span, "as local variable type")?;
 
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("declare_local called outside function")
             .declare(name, data_type, is_const, span)
     }
@@ -658,8 +739,8 @@ impl<'a> CompilationContext<'a> {
         // Validate type is instantiable (not a mixin)
         self.validate_instantiable_type(&data_type, span, "as function parameter type")?;
 
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("declare_param called outside function")
             .declare_param(name, data_type, is_const, span)
     }
@@ -668,8 +749,8 @@ impl<'a> CompilationContext<'a> {
     ///
     /// Panics if not in a function.
     pub fn mark_local_initialized(&mut self, name: &str) {
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("mark_local_initialized called outside function")
             .mark_initialized(name);
     }
@@ -678,47 +759,19 @@ impl<'a> CompilationContext<'a> {
     ///
     /// Returns `None` if not in a function or variable not found.
     pub fn get_local(&self, name: &str) -> Option<&LocalVar> {
-        self.local_scope.as_ref()?.get(name)
+        self.local_scope_stack.last()?.get(name)
     }
 
     /// Look up a variable, capturing from parent scopes if in a lambda.
     ///
     /// Returns `None` if not in a function or variable not found.
     pub fn get_local_or_capture(&mut self, name: &str) -> Option<VarLookup> {
-        self.local_scope.as_mut()?.get_or_capture(name)
+        self.local_scope_stack.last_mut()?.get_or_capture(name)
     }
 
     /// Get the local scope (if in a function).
     pub fn local_scope(&self) -> Option<&LocalScope> {
-        self.local_scope.as_ref()
-    }
-
-    /// Begin compiling a lambda - creates nested scope from current.
-    ///
-    /// The current scope becomes the parent of the new lambda scope.
-    /// Panics if not in a function.
-    pub fn begin_lambda(&mut self) {
-        let parent = self
-            .local_scope
-            .take()
-            .expect("begin_lambda called outside function");
-        self.local_scope = Some(LocalScope::nested(parent));
-    }
-
-    /// End lambda compilation - restores parent scope.
-    ///
-    /// Returns the lambda's local scope (with captures).
-    /// Panics if not in a lambda or no parent scope.
-    pub fn end_lambda(&mut self) -> LocalScope {
-        let mut lambda_scope = self
-            .local_scope
-            .take()
-            .expect("end_lambda called without active scope");
-        let parent = lambda_scope
-            .take_parent()
-            .expect("end_lambda called but no parent scope");
-        self.local_scope = Some(parent);
-        lambda_scope
+        self.local_scope_stack.last()
     }
 
     // ========================================================================
@@ -1594,41 +1647,50 @@ mod tests {
     }
 
     #[test]
-    fn context_lambda_capture() {
+    fn context_nested_function_scopes() {
         use angelscript_core::primitives;
 
         let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
 
+        // Outer function
         ctx.begin_function();
+        assert_eq!(ctx.function_depth(), 1);
 
-        // Declare variable in outer function
         ctx.declare_local(
-            "captured".into(),
+            "outer_var".into(),
             DataType::simple(primitives::INT32),
             false,
             Span::default(),
         )
         .unwrap();
 
-        // Begin lambda
-        ctx.begin_lambda();
+        // Nested lambda (inner function)
+        ctx.begin_function();
+        assert_eq!(ctx.function_depth(), 2);
 
-        // Try to access the variable - should capture it
-        let lookup = ctx.get_local_or_capture("captured");
-        assert!(matches!(lookup, Some(VarLookup::Captured(_))));
+        // Lambda has its own isolated scope - outer_var not visible
+        assert!(ctx.get_local("outer_var").is_none());
+
+        ctx.declare_local(
+            "inner_var".into(),
+            DataType::simple(primitives::BOOL),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+        assert!(ctx.get_local("inner_var").is_some());
 
         // End lambda
-        let lambda_scope = ctx.end_lambda();
-        assert_eq!(lambda_scope.captures().len(), 1);
+        ctx.end_function();
+        assert_eq!(ctx.function_depth(), 1);
 
-        // Back in outer function
-        let var = ctx
-            .get_local("captured")
-            .expect("captured should still be in outer scope");
-        assert_eq!(var.data_type.type_hash, primitives::INT32);
+        // Back in outer function - outer_var visible again, inner_var not
+        assert!(ctx.get_local("outer_var").is_some());
+        assert!(ctx.get_local("inner_var").is_none());
 
         ctx.end_function();
+        assert_eq!(ctx.function_depth(), 0);
     }
 
     #[test]
@@ -1646,6 +1708,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: true,
             is_interface: false,
+            is_enum: false,
         };
 
         let result = ctx.declare_local("x".into(), mixin_type, false, Span::default());
@@ -1676,6 +1739,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: true,
             is_interface: false,
+            is_enum: false,
         };
 
         let result = ctx.declare_param("param".into(), mixin_type, false, Span::default());
@@ -1705,5 +1769,108 @@ mod tests {
         assert!(result.is_ok());
 
         ctx.end_function();
+    }
+
+    // =========================================================================
+    // Type Alias Resolution Tests
+    // =========================================================================
+
+    #[test]
+    fn context_resolves_type_alias_global() {
+        let mut registry = SymbolRegistry::with_primitives();
+        registry
+            .register_type_alias("EntityId", &[], primitives::INT32)
+            .unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Should resolve typedef to target type
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
+    }
+
+    #[test]
+    fn context_resolves_type_alias_in_namespace() {
+        let mut registry = SymbolRegistry::with_primitives();
+        registry
+            .register_type_alias("EntityId", &["Game".to_string()], primitives::INT32)
+            .unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Not visible from global namespace
+        assert!(
+            ctx.resolve_type("EntityId").is_none(),
+            "EntityId should not resolve from global namespace"
+        );
+
+        // Enter the Game namespace
+        ctx.enter_namespace("Game");
+
+        // Now visible
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
+    }
+
+    #[test]
+    fn context_resolves_qualified_type_alias() {
+        let mut registry = SymbolRegistry::with_primitives();
+        registry
+            .register_type_alias("EntityId", &["Game".to_string()], primitives::INT32)
+            .unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Should resolve qualified alias from global namespace
+        let resolved = ctx.resolve_type("Game::EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
+    }
+
+    #[test]
+    fn context_type_shadows_type_alias() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a class named "EntityId"
+        let class = ClassEntry::new(
+            "EntityId",
+            vec![],
+            "EntityId",
+            TypeHash::from_name("EntityId"),
+            TypeKind::reference(),
+            angelscript_core::entries::TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        // Also register a typedef with the same name (unusual but possible)
+        registry
+            .register_type_alias("EntityId", &["Other".to_string()], primitives::INT32)
+            .unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // The type should have priority over the alias in global namespace
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, Some(TypeHash::from_name("EntityId")));
+
+        // The namespaced alias should still work
+        let resolved = ctx.resolve_type("Other::EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
+    }
+
+    #[test]
+    fn context_resolves_type_alias_via_import() {
+        let mut registry = SymbolRegistry::with_primitives();
+        registry
+            .register_type_alias("EntityId", &["Game".to_string()], primitives::INT32)
+            .unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Import the Game namespace
+        ctx.add_import("Game");
+
+        // Should resolve via import
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
     }
 }

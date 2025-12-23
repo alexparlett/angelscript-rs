@@ -302,9 +302,16 @@ impl Unit {
                 .map(|c| c.registry())
                 .unwrap_or(&default_registry);
 
+            // Get string type hash from string factory (if configured)
+            let string_type_hash = self
+                .context
+                .as_ref()
+                .and_then(|c| c.string_factory())
+                .map(|f| f.type_hash());
+
             if scripts.len() == 1 {
                 // TODO: use a unique unit ID per compilation
-                let compiler = Compiler::new(global_registry, UnitId::new(0));
+                let compiler = Compiler::new(global_registry, UnitId::new(0), string_type_hash);
                 compiler.compile(&scripts[0].1)
             } else {
                 todo!("Multi-file compilation not yet implemented")
@@ -753,5 +760,37 @@ mod tests {
         // Empty errors return None
         let err = BuildError::NoSources;
         assert!(err.first_error().is_none());
+    }
+
+    #[test]
+    fn string_literal_compiles_with_context() {
+        // This tests that string_type_hash is properly wired from Context → Compiler → CompilationContext
+        let ctx = Arc::new(Context::with_default_modules().unwrap());
+        let mut unit = ctx.create_unit().unwrap();
+        unit.add_source("test.as", r#"void main() { string s = "hello"; }"#)
+            .unwrap();
+
+        // Should compile without error because string factory is configured
+        let result = unit.build();
+        assert!(
+            result.is_ok(),
+            "String literal should compile with context: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn string_literal_fails_without_context() {
+        // Without context, there's no string factory, so string literals should fail
+        let mut unit = Unit::new();
+        unit.add_source("test.as", r#"void main() { string s = "hello"; }"#)
+            .unwrap();
+
+        // Should fail because string factory is not configured
+        let result = unit.build();
+        assert!(
+            result.is_err(),
+            "String literal should fail without context"
+        );
     }
 }

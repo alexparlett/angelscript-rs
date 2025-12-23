@@ -42,6 +42,8 @@ use angelscript_parser::ast::{
 };
 use rustc_hash::FxHashMap;
 
+use angelscript_parser::ast::TypeBase;
+
 use crate::context::CompilationContext;
 use crate::passes::{PendingInheritance, PendingResolutions};
 use crate::type_resolver::TypeResolver;
@@ -715,9 +717,9 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
         let func_def = FunctionDef::new(
             func_hash,
-            name,
+            name.clone(),
             vec![],
-            params,
+            params.clone(),
             return_type,
             Some(iface_hash),
             traits,
@@ -735,6 +737,16 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.functions_registered += 1;
+
+            // Add method signature to interface's methods list
+            let param_types: Vec<DataType> = params.into_iter().map(|p| p.data_type).collect();
+            let mut method_sig =
+                angelscript_core::MethodSignature::new(name, param_types, return_type);
+            method_sig.is_const = method.is_const;
+
+            if let Some(iface) = self.ctx.unit_registry_mut().get_interface_mut(iface_hash) {
+                iface.methods.push(method_sig);
+            }
         }
     }
 
@@ -941,13 +953,25 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         // Compute hash using the qualified name
         let type_hash = TypeHash::from_name(&qualified_name);
 
+        // Reject auto type for global variables (not supported, like in C)
+        if matches!(var.ty.base, TypeBase::Auto) {
+            self.ctx.add_error(CompilationError::InvalidOperation {
+                message: "'auto' type is not supported for global variables".to_string(),
+                span: var.span,
+            });
+            return;
+        }
+
         // Resolve the variable's type
-        let mut resolver = TypeResolver::new(self.ctx);
-        let data_type = match resolver.resolve(&var.ty) {
-            Ok(dt) => dt,
-            Err(e) => {
-                self.ctx.add_error(e);
-                return;
+        let data_type = {
+            // Normal type resolution
+            let mut resolver = TypeResolver::new(self.ctx);
+            match resolver.resolve(&var.ty) {
+                Ok(dt) => dt,
+                Err(e) => {
+                    self.ctx.add_error(e);
+                    return;
+                }
             }
         };
 
@@ -1066,10 +1090,32 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         self.types_registered += 1;
     }
 
-    fn visit_typedef(&mut self, _td: &TypedefDecl<'_>) {
-        // Typedef creates an alias - handled in type resolution
-        // For now, we just skip registration as typedefs don't create new types
-        // They're resolved as aliases during type resolution
+    fn visit_typedef(&mut self, td: &TypedefDecl<'_>) {
+        // Resolve the target type using TypeResolver
+        let mut resolver = TypeResolver::new(self.ctx);
+        let target_type = match resolver.resolve(&td.base_type) {
+            Ok(dt) => dt,
+            Err(e) => {
+                self.ctx.add_error(e);
+                return;
+            }
+        };
+
+        // Get current namespace
+        let namespace = self.current_namespace_vec();
+        let alias_name = td.name.name;
+
+        // Register the type alias in the unit registry
+        if let Err(e) = self.ctx.unit_registry_mut().register_type_alias(
+            alias_name,
+            &namespace,
+            target_type.type_hash,
+        ) {
+            self.ctx.add_error(CompilationError::Other {
+                message: format!("failed to register typedef {}: {}", alias_name, e),
+                span: td.span,
+            });
+        }
     }
 
     // ==========================================================================
@@ -1202,6 +1248,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             ref_modifier: RefModifier::In,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let params = vec![Param::new("other", param_type)];
@@ -1252,6 +1299,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             ref_modifier: RefModifier::In,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let params = vec![Param::new("other", param_type)];
@@ -1266,6 +1314,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             ref_modifier: RefModifier::InOut,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let func_hash = TypeHash::from_method(class_hash, "opAssign", &param_hashes);
@@ -1326,6 +1375,7 @@ fn convert_visibility(v: angelscript_parser::ast::Visibility) -> Visibility {
 mod tests {
     use super::*;
     use crate::passes::TypeCompletionPass;
+    use angelscript_core::primitives;
     use angelscript_parser::Parser;
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
@@ -3027,5 +3077,143 @@ mod tests {
             op_impl_conv.is_some(),
             "behaviors.operators should contain OpImplConv(int)"
         );
+    }
+
+    // ==========================================================================
+    // Auto globals are not supported
+    // ==========================================================================
+
+    #[test]
+    fn auto_global_is_error() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = 42;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.errors.len(), 1);
+        assert!(
+            output.errors[0]
+                .to_string()
+                .contains("'auto' type is not supported for global variables")
+        );
+    }
+
+    // ==========================================================================
+    // Typedef tests
+    // ==========================================================================
+
+    #[test]
+    fn register_typedef_primitive() {
+        let (registry, arena) = setup_context();
+        let source = "typedef int EntityId;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        // EntityId should resolve to int
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, ctx.resolve_type("int"));
+    }
+
+    #[test]
+    fn register_typedef_in_namespace() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            namespace Game {
+                typedef int EntityId;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        // Game::EntityId should resolve to int
+        let resolved = ctx.resolve_type("Game::EntityId");
+        assert_eq!(resolved, ctx.resolve_type("int"));
+    }
+
+    #[test]
+    fn register_typedef_template() {
+        use angelscript_core::entries::TypeSource;
+
+        let (mut registry, arena) = setup_context();
+
+        // Register array template
+        let array_hash = TypeHash::from_name("array");
+        let t_param =
+            angelscript_core::TemplateParamEntry::for_template("T", 0, array_hash, "array");
+        let t_hash = t_param.type_hash;
+        registry.register_type(t_param.into()).unwrap();
+
+        let array_entry = ClassEntry::new(
+            "array",
+            vec![],
+            "array",
+            array_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_template_params(vec![t_hash]);
+        registry.register_type(array_entry.into()).unwrap();
+
+        let source = "typedef array<int> IntArray;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+
+        // IntArray should resolve to array<int>
+        let resolved = ctx.resolve_type("IntArray");
+        assert!(resolved.is_some(), "IntArray should be resolvable");
+
+        // The resolved type should be array<int>
+        let entry = ctx.get_type(resolved.unwrap());
+        assert!(entry.is_some());
+        let class = entry.unwrap().as_class().unwrap();
+        assert_eq!(class.qualified_name, "array<int>");
+    }
+
+    #[test]
+    fn register_typedef_used_in_variable() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            typedef int EntityId;
+            EntityId playerId;
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.globals_registered, 1);
+
+        // The global should have type int (resolved from EntityId)
+        let hash = ctx.resolve_global("playerId").unwrap();
+        let global = ctx.get_global_entry(hash).unwrap();
+        assert_eq!(global.data_type.type_hash, ctx.resolve_type("int").unwrap());
     }
 }

@@ -32,6 +32,16 @@ pub fn resolve_binary(
         return Ok(resolution);
     }
 
+    // Try handle identity comparison for is/!is operators
+    if matches!(op, BinaryOp::Is | BinaryOp::NotIs) {
+        // Handle identity comparison works if both sides are handles or null
+        if (left.is_handle || left.is_null()) && (right.is_handle || right.is_null()) {
+            return Ok(OperatorResolution::HandleComparison {
+                negate: op == BinaryOp::NotIs,
+            });
+        }
+    }
+
     Err(CompilationError::Other {
         message: format!(
             "No matching operator '{}' for types {:?} and {:?}",

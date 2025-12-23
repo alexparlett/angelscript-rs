@@ -30,14 +30,18 @@
 
 use angelscript_core::{CompilationError, DataType, FunctionEntry, Span, TypeHash, UnitId};
 use angelscript_parser::ast::{
-    ClassDecl, ClassMember, FunctionDecl, GlobalVarDecl, Item, NamespaceDecl, Script,
+    ClassDecl, ClassMember, FunctionDecl, GlobalVarDecl, Item, NamespaceDecl, Script, TypeBase,
 };
 
-use crate::bytecode::{BytecodeChunk, ConstantPool};
+use crate::bytecode::ConstantPool;
 use crate::context::CompilationContext;
+use crate::emit::BytecodeEmitter;
 use crate::field_init::{self, FieldInit};
 use crate::function_compiler::FunctionCompiler;
 use crate::type_resolver::TypeResolver;
+
+// Re-export types from emit for backward compatibility
+pub use crate::emit::{CompiledFunctionEntry, GlobalInitEntry};
 
 /// Output from the compilation pass.
 #[derive(Debug)]
@@ -52,43 +56,17 @@ pub struct CompilationOutput {
     pub errors: Vec<CompilationError>,
 }
 
-/// A compiled function with its bytecode.
-#[derive(Debug)]
-pub struct CompiledFunctionEntry {
-    /// Function hash (for linking).
-    pub hash: TypeHash,
-    /// Function name (for debugging).
-    pub name: String,
-    /// Compiled bytecode.
-    pub bytecode: BytecodeChunk,
-}
-
-/// A global variable initializer.
-#[derive(Debug)]
-pub struct GlobalInitEntry {
-    /// Global variable hash.
-    pub hash: TypeHash,
-    /// Variable name.
-    pub name: String,
-    /// Initializer bytecode (evaluates expression and stores to global).
-    pub bytecode: BytecodeChunk,
-}
-
 /// Pass 2: Compile function bodies to bytecode.
 ///
 /// This pass walks the AST after registration (Pass 1) and type completion (Pass 1b),
 /// compiling all function bodies to bytecode.
 pub struct CompilationPass<'a, 'reg> {
-    /// Compilation context with type registry and namespace management.
+    /// Compilation context with type registry, namespace management.
     ctx: &'a mut CompilationContext<'reg>,
+    /// Bytecode emitter that owns all compilation output.
+    emitter: BytecodeEmitter,
     /// Unit ID for this compilation.
     unit_id: UnitId,
-    /// Shared constant pool for all functions.
-    constants: ConstantPool,
-    /// Compiled functions.
-    compiled_functions: Vec<CompiledFunctionEntry>,
-    /// Global initializers.
-    global_inits: Vec<GlobalInitEntry>,
 }
 
 impl<'a, 'reg> CompilationPass<'a, 'reg> {
@@ -96,10 +74,8 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
     pub fn new(ctx: &'a mut CompilationContext<'reg>, unit_id: UnitId) -> Self {
         Self {
             ctx,
+            emitter: BytecodeEmitter::new(),
             unit_id,
-            constants: ConstantPool::new(),
-            compiled_functions: Vec::new(),
-            global_inits: Vec::new(),
         }
     }
 
@@ -111,14 +87,16 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             self.compile_item(item);
         }
 
+        let (constants, functions, global_inits) = self.emitter.decompose();
+
         let output = CompilationOutput {
             unit_id: self.unit_id,
-            functions: self.compiled_functions,
-            global_inits: self.global_inits,
+            functions,
+            global_inits,
             errors: self.ctx.take_errors(),
         };
 
-        (output, self.constants)
+        (output, constants)
     }
 
     // ==========================================================================
@@ -129,7 +107,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         match item {
             Item::Namespace(ns) => self.compile_namespace(ns),
             Item::Class(class) => self.compile_class(class),
-            Item::Function(func) => self.compile_function(func, None, None),
+            Item::Function(func) => self.compile_function(func, None),
             Item::GlobalVar(var) => self.compile_global_var(var),
 
             // These have no code generation in Pass 2
@@ -182,7 +160,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                     if func.is_constructor() {
                         self.compile_constructor(func, class_hash, class, field_inits.as_ref());
                     } else {
-                        self.compile_function(func, Some(class_hash), None);
+                        self.compile_function(func, Some(class_hash));
                     }
                 }
                 ClassMember::Field(_)
@@ -235,6 +213,9 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             return;
         }
 
+        // Start a new chunk for this constructor
+        self.emitter.start_chunk();
+
         // Compile the constructor with field initialization
         match self.compile_constructor_body(
             &func_entry,
@@ -244,14 +225,13 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             field_inits,
             func.span,
         ) {
-            Ok(bytecode) => {
-                self.compiled_functions.push(CompiledFunctionEntry {
-                    hash: func_hash,
-                    name: func_entry.def.name.clone(),
-                    bytecode,
-                });
+            Ok(()) => {
+                self.emitter
+                    .finish_function(func_hash, func_entry.def.name.clone());
             }
             Err(e) => {
+                // Discard the chunk on error
+                self.emitter.finish_chunk();
                 self.ctx.add_error(e);
             }
         }
@@ -261,12 +241,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
     // Function Compilation
     // ==========================================================================
 
-    fn compile_function<'ast>(
-        &mut self,
-        func: &FunctionDecl<'ast>,
-        owner: Option<TypeHash>,
-        _field_inits: Option<&(Vec<FieldInit<'ast>>, Vec<FieldInit<'ast>>)>,
-    ) {
+    fn compile_function<'ast>(&mut self, func: &FunctionDecl<'ast>, owner: Option<TypeHash>) {
         // Skip functions without bodies (external, abstract, interface)
         let body = match &func.body {
             Some(b) => b,
@@ -296,16 +271,18 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             return;
         }
 
+        // Start a new chunk for this function
+        self.emitter.start_chunk();
+
         // Compile the function
         match self.compile_function_body(&func_entry, body, owner, func.span) {
-            Ok(bytecode) => {
-                self.compiled_functions.push(CompiledFunctionEntry {
-                    hash: func_hash,
-                    name: func_entry.def.name.clone(),
-                    bytecode,
-                });
+            Ok(()) => {
+                self.emitter
+                    .finish_function(func_hash, func_entry.def.name.clone());
             }
             Err(e) => {
+                // Discard the chunk on error
+                self.emitter.finish_chunk();
                 self.ctx.add_error(e);
             }
         }
@@ -317,9 +294,9 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         body: &angelscript_parser::ast::Block<'_>,
         owner: Option<TypeHash>,
         span: Span,
-    ) -> Result<BytecodeChunk, CompilationError> {
+    ) -> Result<(), CompilationError> {
         let mut compiler =
-            FunctionCompiler::new(self.ctx, &mut self.constants, &func_entry.def, owner);
+            FunctionCompiler::new(self.ctx, &mut self.emitter, &func_entry.def, owner);
 
         // Set up parameters
         compiler.setup_parameters(span)?;
@@ -330,8 +307,10 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         // Verify returns for non-void functions
         compiler.verify_returns(span)?;
 
-        // Get bytecode
-        Ok(compiler.finish())
+        // Finalize (adds implicit return for void functions)
+        compiler.finish();
+
+        Ok(())
     }
 
     fn compile_constructor_body<'ast>(
@@ -342,16 +321,12 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         _class: &ClassDecl<'ast>,
         field_inits: Option<&(Vec<FieldInit<'ast>>, Vec<FieldInit<'ast>>)>,
         span: Span,
-    ) -> Result<BytecodeChunk, CompilationError> {
+    ) -> Result<(), CompilationError> {
         use crate::bytecode::OpCode;
-        use crate::emit::BytecodeEmitter;
         use crate::stmt::StmtCompiler;
 
         // Begin function context
         self.ctx.begin_function();
-
-        // Create emitter
-        let mut emitter = BytecodeEmitter::new(&mut self.constants);
 
         // Add implicit 'this' parameter
         let this_type = DataType::with_handle(class_hash, func_entry.def.traits.is_const);
@@ -399,7 +374,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             {
                 let mut stmt_compiler = StmtCompiler::new_for_constructor(
                     self.ctx,
-                    &mut emitter,
+                    &mut self.emitter,
                     func_entry.def.return_type,
                     Some(class_hash),
                 );
@@ -412,7 +387,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             {
                 let mut stmt_compiler = StmtCompiler::new_for_constructor(
                     self.ctx,
-                    &mut emitter,
+                    &mut self.emitter,
                     func_entry.def.return_type,
                     Some(class_hash),
                 );
@@ -420,13 +395,18 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             }
 
             // Step 3: Compile field initializers (fields with explicit init)
-            field_init::compile_post_base_inits(self.ctx, &mut emitter, class_hash, with_init)?;
+            field_init::compile_post_base_inits(
+                self.ctx,
+                &mut self.emitter,
+                class_hash,
+                with_init,
+            )?;
 
             // Compile statements after super()
             {
                 let mut stmt_compiler = StmtCompiler::new_for_constructor(
                     self.ctx,
-                    &mut emitter,
+                    &mut self.emitter,
                     func_entry.def.return_type,
                     Some(class_hash),
                 );
@@ -462,19 +442,24 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
 
                 // Emit implicit super() call for base class default constructor
                 // Bytecode: GetThis, CallMethod(base_default_ctor)
-                emitter.emit_get_this();
-                emitter.emit_call_method(base_default_ctor, 0);
+                self.emitter.emit_get_this();
+                self.emitter.emit_call_method(base_default_ctor, 0);
             }
 
             // Step 3: Compile field initializers (fields with explicit init)
             // These run after implicit base class initialization
-            field_init::compile_post_base_inits(self.ctx, &mut emitter, class_hash, with_init)?;
+            field_init::compile_post_base_inits(
+                self.ctx,
+                &mut self.emitter,
+                class_hash,
+                with_init,
+            )?;
 
             // Compile the rest of the constructor body
             {
                 let mut stmt_compiler = StmtCompiler::new_for_constructor(
                     self.ctx,
-                    &mut emitter,
+                    &mut self.emitter,
                     func_entry.def.return_type,
                     Some(class_hash),
                 );
@@ -490,17 +475,17 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         // Add implicit return for void constructors
         if func_entry.def.return_type.is_void() {
             // Check if last instruction is already a return
-            let chunk = emitter.chunk();
+            let chunk = self.emitter.chunk();
             let needs_return = chunk.is_empty() || {
                 let last_op = chunk.read_op(chunk.len() - 1);
                 last_op != Some(OpCode::ReturnVoid) && last_op != Some(OpCode::Return)
             };
             if needs_return {
-                emitter.emit(OpCode::ReturnVoid);
+                self.emitter.emit(OpCode::ReturnVoid);
             }
         }
 
-        Ok(emitter.finish())
+        Ok(())
     }
 
     // ==========================================================================
@@ -541,6 +526,9 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                 None => continue,
             };
 
+            // Start a new chunk for this auto-generated method
+            self.emitter.start_chunk();
+
             let result = match auto_kind {
                 AutoGenKind::DefaultConstructor => self.compile_auto_default_constructor(
                     &func_entry,
@@ -557,14 +545,13 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             };
 
             match result {
-                Ok(bytecode) => {
-                    self.compiled_functions.push(CompiledFunctionEntry {
-                        hash: func_entry.def.func_hash,
-                        name: func_entry.def.name.clone(),
-                        bytecode,
-                    });
+                Ok(()) => {
+                    self.emitter
+                        .finish_function(func_entry.def.func_hash, func_entry.def.name.clone());
                 }
                 Err(e) => {
+                    // Discard the chunk on error
+                    self.emitter.finish_chunk();
                     // For copy constructor and opAssign, suppress errors per AngelScript spec
                     // (they simply won't be available if fields can't be copied)
                     if auto_kind == AutoGenKind::DefaultConstructor {
@@ -586,15 +573,11 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         class_hash: TypeHash,
         field_inits: Option<&(Vec<FieldInit<'ast>>, Vec<FieldInit<'ast>>)>,
         class_span: Span,
-    ) -> Result<BytecodeChunk, CompilationError> {
+    ) -> Result<(), CompilationError> {
         use crate::bytecode::OpCode;
-        use crate::emit::BytecodeEmitter;
 
         // Begin function context
         self.ctx.begin_function();
-
-        // Create emitter
-        let mut emitter = BytecodeEmitter::new(&mut self.constants);
 
         // Add implicit 'this' parameter
         let this_type = DataType::with_handle(class_hash, false);
@@ -633,22 +616,27 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                 });
             }
 
-            emitter.emit_get_this();
-            emitter.emit_call_method(base_default_ctor, 0);
+            self.emitter.emit_get_this();
+            self.emitter.emit_call_method(base_default_ctor, 0);
         }
 
         // Step 2: Initialize fields with explicit initializers
         if let Some((_without_init, with_init)) = field_inits {
-            field_init::compile_post_base_inits(self.ctx, &mut emitter, class_hash, with_init)?;
+            field_init::compile_post_base_inits(
+                self.ctx,
+                &mut self.emitter,
+                class_hash,
+                with_init,
+            )?;
         }
 
         // End function scope
         let _scope = self.ctx.end_function();
 
         // Add implicit return
-        emitter.emit(OpCode::ReturnVoid);
+        self.emitter.emit(OpCode::ReturnVoid);
 
-        Ok(emitter.finish())
+        Ok(())
     }
 
     /// Compile an auto-generated copy constructor.
@@ -661,15 +649,11 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         func_entry: &FunctionEntry,
         class_hash: TypeHash,
         class_span: Span,
-    ) -> Result<BytecodeChunk, CompilationError> {
+    ) -> Result<(), CompilationError> {
         use crate::bytecode::OpCode;
-        use crate::emit::BytecodeEmitter;
 
         // Begin function context
         self.ctx.begin_function();
-
-        // Create emitter
-        let mut emitter = BytecodeEmitter::new(&mut self.constants);
 
         // Add implicit 'this' parameter
         let this_type = DataType::with_handle(class_hash, false);
@@ -716,9 +700,9 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                 });
             }
 
-            emitter.emit_get_this();
-            emitter.emit_get_local(1); // 'other' parameter
-            emitter.emit_call_method(base_copy_ctor, 1);
+            self.emitter.emit_get_this();
+            self.emitter.emit_get_local(1); // 'other' parameter
+            self.emitter.emit_call_method(base_copy_ctor, 1);
         }
 
         // Step 2: Copy each field from other
@@ -728,23 +712,23 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             }
 
             // Load this
-            emitter.emit_get_this();
+            self.emitter.emit_get_this();
 
             // Load other.field
-            emitter.emit_get_local(1); // 'other' is local 1 (after 'this')
-            emitter.emit_get_field(field_idx as u16);
+            self.emitter.emit_get_local(1); // 'other' is local 1 (after 'this')
+            self.emitter.emit_get_field(field_idx as u16);
 
             // Store to this.field
-            emitter.emit_set_field(field_idx as u16);
+            self.emitter.emit_set_field(field_idx as u16);
         }
 
         // End function scope
         let _scope = self.ctx.end_function();
 
         // Add implicit return
-        emitter.emit(OpCode::ReturnVoid);
+        self.emitter.emit(OpCode::ReturnVoid);
 
-        Ok(emitter.finish())
+        Ok(())
     }
 
     /// Compile an auto-generated opAssign.
@@ -758,15 +742,11 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         func_entry: &FunctionEntry,
         class_hash: TypeHash,
         class_span: Span,
-    ) -> Result<BytecodeChunk, CompilationError> {
+    ) -> Result<(), CompilationError> {
         use crate::bytecode::OpCode;
-        use crate::emit::BytecodeEmitter;
 
         // Begin function context
         self.ctx.begin_function();
-
-        // Create emitter
-        let mut emitter = BytecodeEmitter::new(&mut self.constants);
 
         // Add implicit 'this' parameter
         let this_type = DataType::with_handle(class_hash, false);
@@ -813,11 +793,11 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                 });
             }
 
-            emitter.emit_get_this();
-            emitter.emit_get_local(1); // 'other' parameter
-            emitter.emit_call_method(base_op_assign, 1);
+            self.emitter.emit_get_this();
+            self.emitter.emit_get_local(1); // 'other' parameter
+            self.emitter.emit_call_method(base_op_assign, 1);
             // opAssign returns this, but we discard it since we'll return our own this
-            emitter.emit_pop();
+            self.emitter.emit_pop();
         }
 
         // Step 2: Assign each field from other
@@ -827,24 +807,24 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             }
 
             // Load this
-            emitter.emit_get_this();
+            self.emitter.emit_get_this();
 
             // Load other.field
-            emitter.emit_get_local(1); // 'other' is local 1 (after 'this')
-            emitter.emit_get_field(field_idx as u16);
+            self.emitter.emit_get_local(1); // 'other' is local 1 (after 'this')
+            self.emitter.emit_get_field(field_idx as u16);
 
             // Store to this.field
-            emitter.emit_set_field(field_idx as u16);
+            self.emitter.emit_set_field(field_idx as u16);
         }
 
         // Step 3: Return this
-        emitter.emit_get_this();
-        emitter.emit(OpCode::Return);
+        self.emitter.emit_get_this();
+        self.emitter.emit(OpCode::Return);
 
         // End function scope
         let _scope = self.ctx.end_function();
 
-        Ok(emitter.finish())
+        Ok(())
     }
 
     fn compute_function_hash(
@@ -894,27 +874,42 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         let qualified_name = self.qualified_name(&name);
         let var_hash = TypeHash::from_name(&qualified_name);
 
-        // Resolve the variable type
-        let mut resolver = TypeResolver::new(self.ctx);
-        let var_type = match resolver.resolve(&var.ty) {
-            Ok(dt) => dt,
-            Err(e) => {
-                self.ctx.add_error(e);
-                return;
+        // Resolve the variable type (for auto, look up the registered global)
+        let is_auto = matches!(var.ty.base, TypeBase::Auto);
+        let var_type = if is_auto {
+            // Auto type was resolved during registration - look up the registered global
+            match self.ctx.get_global_entry(var_hash) {
+                Some(entry) => entry.data_type,
+                None => {
+                    self.ctx.add_error(CompilationError::Other {
+                        message: format!("global variable '{}' not found", qualified_name),
+                        span: var.span,
+                    });
+                    return;
+                }
+            }
+        } else {
+            let mut resolver = TypeResolver::new(self.ctx);
+            match resolver.resolve(&var.ty) {
+                Ok(dt) => dt,
+                Err(e) => {
+                    self.ctx.add_error(e);
+                    return;
+                }
             }
         };
 
+        // Start a new chunk for the global initializer
+        self.emitter.start_chunk();
+
         // Compile the initializer
-        match self.compile_global_initializer(&qualified_name, var_hash, init, &var_type, var.span)
-        {
-            Ok(bytecode) => {
-                self.global_inits.push(GlobalInitEntry {
-                    hash: var_hash,
-                    name: qualified_name,
-                    bytecode,
-                });
+        match self.compile_global_initializer(var_hash, init, &var_type) {
+            Ok(()) => {
+                self.emitter.finish_global_init(var_hash, qualified_name);
             }
             Err(e) => {
+                // Discard the chunk on error
+                self.emitter.finish_chunk();
                 self.ctx.add_error(e);
             }
         }
@@ -922,36 +917,31 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
 
     fn compile_global_initializer(
         &mut self,
-        _name: &str,
         hash: TypeHash,
         init: &angelscript_parser::ast::Expr<'_>,
         var_type: &DataType,
-        _span: Span,
-    ) -> Result<BytecodeChunk, CompilationError> {
+    ) -> Result<(), CompilationError> {
         use crate::bytecode::OpCode;
-        use crate::emit::BytecodeEmitter;
         use crate::expr::ExprCompiler;
 
         // Create a minimal function context for the initializer
         self.ctx.begin_function();
 
-        let mut emitter = BytecodeEmitter::new(&mut self.constants);
-
         // Compile the initializer expression
         {
-            let mut expr_compiler = ExprCompiler::new(self.ctx, &mut emitter, None);
+            let mut expr_compiler = ExprCompiler::new(self.ctx, &mut self.emitter, None);
             expr_compiler.check(init, var_type)?;
         }
 
         // Store to global
-        emitter.emit_set_global(hash);
+        self.emitter.emit_set_global(hash);
 
         // Return void
-        emitter.emit(OpCode::ReturnVoid);
+        self.emitter.emit(OpCode::ReturnVoid);
 
         self.ctx.end_function();
 
-        Ok(emitter.finish())
+        Ok(())
     }
 
     // ==========================================================================
@@ -965,6 +955,11 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         } else {
             format!("{}::{}", ns, name)
         }
+    }
+
+    /// Get a reference to the bytecode emitter.
+    pub fn emitter(&self) -> &BytecodeEmitter {
+        &self.emitter
     }
 }
 
@@ -1516,21 +1511,14 @@ mod tests {
         ctx.register_function(default_ctor).unwrap();
 
         // Create compilation pass and compile the auto-generated method
-        let constants = ConstantPool::new();
-        let mut pass = CompilationPass {
-            ctx: &mut ctx,
-            unit_id: UnitId::new(1),
-            constants,
-            compiled_functions: vec![],
-            global_inits: vec![],
-        };
+        let mut pass = CompilationPass::new(&mut ctx, UnitId::new(1));
 
         // Call compile_auto_generated_methods
         pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // Check that we got the default constructor compiled
-        assert_eq!(pass.compiled_functions.len(), 1);
-        let compiled = &pass.compiled_functions[0];
+        assert_eq!(pass.emitter().compiled_functions().len(), 1);
+        let compiled = &pass.emitter().compiled_functions()[0];
         let bytecode = &compiled.bytecode;
 
         // First instruction should be GetThis
@@ -1550,7 +1538,7 @@ mod tests {
         // Verify the method hash is for Base default constructor
         let base_default_ctor = TypeHash::from_constructor(base_hash, &[]);
         let const_idx = bytecode.read_u16(2).unwrap();
-        let called_hash = pass.constants.get(const_idx as u32);
+        let called_hash = pass.emitter().constants().get(const_idx as u32);
         assert!(
             matches!(called_hash, Some(Constant::TypeHash(h)) if *h == base_default_ctor),
             "Expected call to Base default constructor"
@@ -1633,21 +1621,14 @@ mod tests {
         ctx.register_function(copy_ctor).unwrap();
 
         // Create compilation pass and compile the auto-generated method
-        let constants = ConstantPool::new();
-        let mut pass = CompilationPass {
-            ctx: &mut ctx,
-            unit_id: UnitId::new(1),
-            constants,
-            compiled_functions: vec![],
-            global_inits: vec![],
-        };
+        let mut pass = CompilationPass::new(&mut ctx, UnitId::new(1));
 
         // Call compile_auto_generated_methods
         pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // Check that we got the copy constructor compiled
-        assert_eq!(pass.compiled_functions.len(), 1);
-        let compiled = &pass.compiled_functions[0];
+        assert_eq!(pass.emitter().compiled_functions().len(), 1);
+        let compiled = &pass.emitter().compiled_functions()[0];
         let bytecode = &compiled.bytecode;
 
         // First instruction should be GetThis
@@ -1674,7 +1655,7 @@ mod tests {
         // Verify the method hash is for Base copy constructor
         let base_copy_ctor = TypeHash::from_constructor(base_hash, &[base_hash]);
         let const_idx = bytecode.read_u16(4).unwrap();
-        let called_hash = pass.constants.get(const_idx as u32);
+        let called_hash = pass.emitter().constants().get(const_idx as u32);
         assert!(
             matches!(called_hash, Some(Constant::TypeHash(h)) if *h == base_copy_ctor),
             "Expected call to Base copy constructor"
@@ -1757,21 +1738,14 @@ mod tests {
         ctx.register_function(op_assign).unwrap();
 
         // Create compilation pass and compile the auto-generated method
-        let constants = ConstantPool::new();
-        let mut pass = CompilationPass {
-            ctx: &mut ctx,
-            unit_id: UnitId::new(1),
-            constants,
-            compiled_functions: vec![],
-            global_inits: vec![],
-        };
+        let mut pass = CompilationPass::new(&mut ctx, UnitId::new(1));
 
         // Call compile_auto_generated_methods
         pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // Check that we got the opAssign compiled
-        assert_eq!(pass.compiled_functions.len(), 1);
-        let compiled = &pass.compiled_functions[0];
+        assert_eq!(pass.emitter().compiled_functions().len(), 1);
+        let compiled = &pass.emitter().compiled_functions()[0];
         let bytecode = &compiled.bytecode;
 
         // First instruction should be GetThis
@@ -1798,7 +1772,7 @@ mod tests {
         // Verify the method hash is for Base opAssign
         let base_op_assign = TypeHash::from_method(base_hash, "opAssign", &[base_hash]);
         let const_idx = bytecode.read_u16(4).unwrap();
-        let called_hash = pass.constants.get(const_idx as u32);
+        let called_hash = pass.emitter().constants().get(const_idx as u32);
         assert!(
             matches!(called_hash, Some(Constant::TypeHash(h)) if *h == base_op_assign),
             "Expected call to Base opAssign"
@@ -1850,19 +1824,12 @@ mod tests {
         ctx.register_function(default_ctor).unwrap();
 
         // Create compilation pass
-        let constants = ConstantPool::new();
-        let mut pass = CompilationPass {
-            ctx: &mut ctx,
-            unit_id: UnitId::new(1),
-            constants,
-            compiled_functions: vec![],
-            global_inits: vec![],
-        };
+        let mut pass = CompilationPass::new(&mut ctx, UnitId::new(1));
 
         pass.compile_auto_generated_methods(class_hash, None, Span::default());
 
-        assert_eq!(pass.compiled_functions.len(), 1);
-        let bytecode = &pass.compiled_functions[0].bytecode;
+        assert_eq!(pass.emitter().compiled_functions().len(), 1);
+        let bytecode = &pass.emitter().compiled_functions()[0].bytecode;
 
         // Should NOT have CallMethod (no base class)
         let mut offset = 0;
@@ -1949,21 +1916,14 @@ mod tests {
         ctx.register_function(default_ctor).unwrap();
 
         // Create compilation pass
-        let constants = ConstantPool::new();
-        let mut pass = CompilationPass {
-            ctx: &mut ctx,
-            unit_id: UnitId::new(1),
-            constants,
-            compiled_functions: vec![],
-            global_inits: vec![],
-        };
+        let mut pass = CompilationPass::new(&mut ctx, UnitId::new(1));
 
         // This should NOT produce any compiled functions because the auto-generation should fail
         pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // No functions should be compiled (error occurred)
         assert_eq!(
-            pass.compiled_functions.len(),
+            pass.emitter().compiled_functions().len(),
             0,
             "Expected no compiled functions when base has no default constructor"
         );
@@ -2038,21 +1998,14 @@ mod tests {
         ctx.register_function(copy_ctor).unwrap();
 
         // Create compilation pass
-        let constants = ConstantPool::new();
-        let mut pass = CompilationPass {
-            ctx: &mut ctx,
-            unit_id: UnitId::new(1),
-            constants,
-            compiled_functions: vec![],
-            global_inits: vec![],
-        };
+        let mut pass = CompilationPass::new(&mut ctx, UnitId::new(1));
 
         // This should NOT produce any compiled functions because base has no copy ctor
         pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // No functions should be compiled (error suppressed per AngelScript spec)
         assert_eq!(
-            pass.compiled_functions.len(),
+            pass.emitter().compiled_functions().len(),
             0,
             "Expected no compiled functions when base has no copy constructor"
         );
@@ -2127,23 +2080,62 @@ mod tests {
         ctx.register_function(op_assign).unwrap();
 
         // Create compilation pass
-        let constants = ConstantPool::new();
-        let mut pass = CompilationPass {
-            ctx: &mut ctx,
-            unit_id: UnitId::new(1),
-            constants,
-            compiled_functions: vec![],
-            global_inits: vec![],
-        };
+        let mut pass = CompilationPass::new(&mut ctx, UnitId::new(1));
 
         // This should NOT produce any compiled functions because base has no opAssign
         pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // No functions should be compiled (error suppressed per AngelScript spec)
         assert_eq!(
-            pass.compiled_functions.len(),
+            pass.emitter().compiled_functions().len(),
             0,
             "Expected no compiled functions when base has no opAssign"
         );
+    }
+
+    // =========================================================================
+    // Auto Type Global Variable Tests
+    // Auto type is not supported for global variables
+    // =========================================================================
+
+    #[test]
+    fn compile_auto_global_rejected() {
+        use crate::passes::registration::RegistrationPass;
+        use angelscript_parser::Parser;
+        use bumpalo::Bump;
+
+        let source = "auto x = 42;";
+        let arena = Bump::new();
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Run registration pass which should reject auto globals
+        let reg_pass = RegistrationPass::new(&mut ctx, UnitId::new(1));
+        let reg_output = reg_pass.run(&script);
+
+        assert!(
+            reg_output.errors.iter().any(|e| matches!(
+                e,
+                CompilationError::InvalidOperation { message, .. }
+                    if message.contains("auto")
+            )),
+            "Expected 'auto' error in registration, got: {:?}",
+            reg_output.errors
+        );
+    }
+
+    #[test]
+    fn compile_explicit_type_global_still_works() {
+        // Ensure non-auto globals still work correctly
+        let source = "int x = 42;";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 1);
     }
 }

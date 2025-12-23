@@ -336,18 +336,15 @@ mod tests {
     fn opcodes_extraction() {
         let mut chunk = BytecodeChunk::new();
 
-        // Constant (1 byte operand) + AddI32 (no operand) + SetLocal (1 byte operand)
+        // Constant (1 byte operand) + Add (no operand) + SetLocal (1 byte operand)
         chunk.write_op(OpCode::Constant, 1);
         chunk.write_byte(0, 1); // constant index
-        chunk.write_op(OpCode::AddI32, 1);
+        chunk.write_op(OpCode::Add, 1);
         chunk.write_op(OpCode::SetLocal, 1);
         chunk.write_byte(0, 1); // slot
 
         let ops = chunk.opcodes();
-        assert_eq!(
-            ops,
-            vec![OpCode::Constant, OpCode::AddI32, OpCode::SetLocal]
-        );
+        assert_eq!(ops, vec![OpCode::Constant, OpCode::Add, OpCode::SetLocal]);
     }
 
     #[test]
@@ -394,12 +391,12 @@ mod tests {
         chunk.write_byte(0, 1);
         chunk.write_op(OpCode::Constant, 1);
         chunk.write_byte(0, 1);
-        chunk.write_op(OpCode::AddI32, 1);
+        chunk.write_op(OpCode::Add, 1);
         chunk.write_op(OpCode::SetLocal, 1);
         chunk.write_byte(0, 1);
 
         // Should find these in order (not contiguous)
-        chunk.assert_contains_opcodes(&[OpCode::GetLocal, OpCode::AddI32, OpCode::SetLocal]);
+        chunk.assert_contains_opcodes(&[OpCode::GetLocal, OpCode::Add, OpCode::SetLocal]);
     }
 
     #[test]
@@ -409,7 +406,7 @@ mod tests {
         chunk.write_op(OpCode::Constant, 1);
         chunk.write_byte(0, 1);
 
-        // Should panic - SubI32 not present
-        chunk.assert_contains_opcodes(&[OpCode::Constant, OpCode::SubI32]);
+        // Should panic - Sub not present
+        chunk.assert_contains_opcodes(&[OpCode::Constant, OpCode::Sub]);
     }
 }

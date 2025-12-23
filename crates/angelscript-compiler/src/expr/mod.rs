@@ -46,18 +46,18 @@ type Result<T> = std::result::Result<T, CompilationError>;
 /// bytecode emitter. It supports both type inference (synthesizing types
 /// from expressions) and type checking (verifying expressions against expected
 /// types).
-pub struct ExprCompiler<'a, 'ctx, 'pool> {
+pub struct ExprCompiler<'a, 'ctx> {
     /// Compilation context with type registry, namespace info, and local scope
     ctx: &'a mut CompilationContext<'ctx>,
     /// Bytecode emitter
-    emitter: &'a mut BytecodeEmitter<'pool>,
+    emitter: &'a mut BytecodeEmitter,
     /// Current class type (for 'this' and method access)
     current_class: Option<TypeHash>,
     /// Whether we're compiling inside a constructor (for super() validation)
     is_constructor: bool,
 }
 
-impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> ExprCompiler<'a, 'ctx> {
     /// Create a new expression compiler.
     ///
     /// # Arguments
@@ -67,7 +67,7 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
     /// * `current_class` - The class being compiled (for 'this' access)
     pub fn new(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
+        emitter: &'a mut BytecodeEmitter,
         current_class: Option<TypeHash>,
     ) -> Self {
         Self {
@@ -83,7 +83,7 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
     /// This enables super() calls which are only valid in constructors.
     pub fn new_for_constructor(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
+        emitter: &'a mut BytecodeEmitter,
         current_class: Option<TypeHash>,
     ) -> Self {
         Self {
@@ -132,7 +132,14 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
     /// This is the "checking" direction of bidirectional type checking.
     /// The expected type guides type checking and may enable implicit conversions.
     pub fn check<'ast>(&mut self, expr: &Expr<'ast>, expected: &DataType) -> Result<ExprInfo> {
-        let info = self.infer(expr)?;
+        // Some expressions need the expected type for type inference (lambdas, init lists).
+        // For these, we pass the expected type directly rather than inferring first.
+        let info = match expr {
+            Expr::Lambda(lam) => lambda::compile_lambda(self, lam, Some(expected))?,
+            Expr::InitList(init) => init_list::compile_init_list(self, init, Some(expected))?,
+            Expr::Paren(p) => return self.check(p.expr, expected),
+            _ => self.infer(expr)?,
+        };
 
         // Exact type match - no conversion needed
         if info.data_type.type_hash == expected.type_hash {
@@ -178,7 +185,7 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
     }
 
     /// Get the bytecode emitter.
-    pub fn emitter(&mut self) -> &mut BytecodeEmitter<'pool> {
+    pub fn emitter(&mut self) -> &mut BytecodeEmitter {
         self.emitter
     }
 
@@ -189,7 +196,7 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
 }
 
 /// Emit the bytecode for a type conversion.
-pub(crate) fn emit_conversion(emitter: &mut BytecodeEmitter<'_>, conv: &Conversion) {
+pub(crate) fn emit_conversion(emitter: &mut BytecodeEmitter, conv: &Conversion) {
     match &conv.kind {
         ConversionKind::Identity => {
             // No bytecode needed
@@ -308,7 +315,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let _compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
     }
@@ -318,7 +326,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let class_hash = TypeHash::from_name("MyClass");
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, Some(class_hash));
@@ -331,7 +340,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
         let unknown_hash = TypeHash::from_name("UnknownType");
@@ -346,7 +356,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
         let name = compiler.type_name(primitives::INT32);

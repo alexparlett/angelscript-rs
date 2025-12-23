@@ -76,10 +76,10 @@ class LinkedList {
         return count;
     }
     
-    void print() const {
+    void printAll() const {
         Node@ current = head;
         while (current !is null) {
-            print(current.value);
+            print("{}", current.value);
             @current = current.next;
         }
     }
@@ -240,7 +240,7 @@ void testDataStructures() {
     list.insertFront(2);
     list.insertFront(1);
     list.insertBack(4);
-    list.print();
+    list.printAll();
     
     // Test stack
     Stack stack;
