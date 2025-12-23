@@ -112,6 +112,14 @@ Each phase has detailed design in the `qualified_name_registry/` subfolder.
 - Add `hash_to_name` reverse index (built in completion)
 - Registry only stores resolved entries
 
+### Phase 4b: Namespace Tree Design
+**Design:** [04b_namespace_tree.md](qualified_name_registry/04b_namespace_tree.md)
+
+- Replace flat `HashMap<QualifiedName, TypeEntry>` with tree structure
+- Remove redundant `name`, `namespace`, `qualified_name` fields from all entry types
+- Tree-based type resolution for efficient `using` directive handling
+- This fundamentally changes how Phases 5/6/7 work
+
 ### Phase 5: Registration Pass Rewrite (angelscript-compiler)
 **Design:** [05_registration.md](qualified_name_registry/05_registration.md)
 
