@@ -1254,11 +1254,11 @@ mod tests {
         assert!(func_entry.is_some(), "variadic print should be registered");
 
         let func = func_entry.unwrap();
-        // Only non-variadic params are in the def.params
+        // Variadic param is included in def.params (for type checking extra args)
         assert_eq!(
             func.def.params.len(),
-            1,
-            "variadic params excluded from def.params"
+            2,
+            "variadic param included in def.params"
         );
         assert!(
             func.def.is_variadic,
@@ -1324,7 +1324,8 @@ mod tests {
         assert!(func_entry.is_some(), "format function should be found");
 
         let func = func_entry.unwrap();
-        assert_eq!(func.def.params.len(), 2);
+        // Variadic param is included in def.params (for type checking extra args)
+        assert_eq!(func.def.params.len(), 3);
         assert!(func.def.is_variadic);
     }
 }
