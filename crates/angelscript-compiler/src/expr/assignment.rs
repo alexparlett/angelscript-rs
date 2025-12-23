@@ -113,19 +113,11 @@ fn compile_index_simple_assign<'ast>(
         })?;
 
     let class_name = class.qualified_name.clone();
-    // Look up set_opIndex from behaviors, falling back to methods for backwards compatibility
+    // Look up set_opIndex from behaviors
     let set_opindex_methods = class
         .behaviors
         .get_operator(OperatorBehavior::OpIndexSet)
         .map(|v| v.to_vec())
-        .or_else(|| {
-            let methods = class.find_methods("set_opIndex");
-            if methods.is_empty() {
-                None
-            } else {
-                Some(methods.to_vec())
-            }
-        })
         .unwrap_or_default();
 
     if !set_opindex_methods.is_empty() {
@@ -185,19 +177,11 @@ fn compile_index_simple_assign<'ast>(
                 .ok_or_else(|| CompilationError::Internal {
                     message: "type not found".to_string(),
                 })?;
-            // Look up opIndex from behaviors, falling back to methods
+            // Look up opIndex from behaviors
             class
                 .behaviors
                 .get_operator(OperatorBehavior::OpIndex)
                 .map(|v| v.to_vec())
-                .or_else(|| {
-                    let methods = class.find_methods("opIndex");
-                    if methods.is_empty() {
-                        None
-                    } else {
-                        Some(methods.to_vec())
-                    }
-                })
                 .unwrap_or_default()
         };
 
@@ -365,24 +349,16 @@ fn compile_index_compound_assign<'ast>(
         })?;
 
     let class_name = class.qualified_name.clone();
-    // Look up set_opIndex from behaviors, falling back to methods for backwards compatibility
+    // Look up set_opIndex from behaviors
     let set_opindex_methods = class
         .behaviors
         .get_operator(OperatorBehavior::OpIndexSet)
         .map(|v| v.to_vec())
-        .or_else(|| {
-            let methods = class.find_methods("set_opIndex");
-            if methods.is_empty() {
-                None
-            } else {
-                Some(methods.to_vec())
-            }
-        })
         .unwrap_or_default();
 
     if !set_opindex_methods.is_empty() {
         // IndexSetter style: need getter first, then setter
-        // Find getter (get_opIndex or opIndex)
+        // Find getter (OpIndexGet or OpIndex from behaviors)
         let (getter_methods, getter_name) = {
             let class = compiler
                 .ctx()
@@ -392,11 +368,20 @@ fn compile_index_compound_assign<'ast>(
                     message: "type not found".to_string(),
                 })?;
 
-            let get_methods = class.find_methods("get_opIndex").to_vec();
+            let get_methods = class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndexGet)
+                .map(|v| v.to_vec())
+                .unwrap_or_default();
             if !get_methods.is_empty() {
                 (get_methods, "get_opIndex")
             } else {
-                (class.find_methods("opIndex").to_vec(), "opIndex")
+                let op_index = class
+                    .behaviors
+                    .get_operator(OperatorBehavior::OpIndex)
+                    .map(|v| v.to_vec())
+                    .unwrap_or_default();
+                (op_index, "opIndex")
             }
         };
 
@@ -499,7 +484,11 @@ fn compile_index_compound_assign<'ast>(
                 .ok_or_else(|| CompilationError::Internal {
                     message: "type not found".to_string(),
                 })?;
-            class.find_methods("opIndex").to_vec()
+            class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndex)
+                .map(|v| v.to_vec())
+                .unwrap_or_default()
         };
 
         if !op_index_methods.is_empty() {
@@ -662,8 +651,8 @@ fn analyze_handle_assign_target<'ast>(
 
     // The target must be a handle type for @target = value to make sense
     if !target.data_type.is_handle {
-        return Err(CompilationError::Other {
-            message: "handle assignment target must be a handle type".to_string(),
+        return Err(CompilationError::InvalidOperation {
+            message: "handle assignment (@) requires target to be a handle type".to_string(),
             span,
         });
     }
@@ -751,7 +740,9 @@ fn analyze_ident_target(
                 .map(|v| v.is_const)
                 .unwrap_or(false);
 
-            // Emit GetThis now - puts object on stack for Field/VirtualProperty handling
+            // TODO: Consider adding ImplicitThisField/ImplicitThisProperty target kinds
+            // to defer emission to emit_store, matching how analyze_member_target works
+            // with infer(). For now we emit GetThis here for consistency with Field handling.
             compiler.emitter().emit_get_this();
 
             if property.is_direct_field() {
@@ -885,19 +876,11 @@ fn analyze_index_target(
                 span,
             })?;
 
-        // Look up set_opIndex from behaviors, falling back to methods for backwards compatibility
+        // Look up set_opIndex from behaviors
         let set_ops = class
             .behaviors
             .get_operator(OperatorBehavior::OpIndexSet)
             .map(|v| v.to_vec())
-            .or_else(|| {
-                let methods = class.find_methods("set_opIndex");
-                if methods.is_empty() {
-                    None
-                } else {
-                    Some(methods.to_vec())
-                }
-            })
             .unwrap_or_default();
 
         (set_ops, class.qualified_name.clone())
@@ -929,7 +912,7 @@ fn analyze_index_target(
             })?
         };
 
-        // Look for corresponding getter (get_opIndex or opIndex) for compound assignment
+        // Look for corresponding getter (OpIndexGet or OpIndex from behaviors) for compound assignment
         let getter_hash = {
             let class = compiler
                 .ctx()
@@ -939,16 +922,24 @@ fn analyze_index_target(
                     message: "type not found".to_string(),
                 })?;
 
-            // Try get_opIndex first, then opIndex
-            let get_opindex_methods = class.find_methods("get_opIndex");
-            let opindex_methods = class.find_methods("opIndex");
+            // Try OpIndexGet first, then OpIndex
+            let get_opindex_methods = class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndexGet)
+                .map(|v| v.to_vec())
+                .unwrap_or_default();
+            let opindex_methods = class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndex)
+                .map(|v| v.to_vec())
+                .unwrap_or_default();
 
             if !get_opindex_methods.is_empty() {
-                resolve_overload(get_opindex_methods, &index_types, compiler.ctx(), span)
+                resolve_overload(&get_opindex_methods, &index_types, compiler.ctx(), span)
                     .ok()
                     .map(|o| o.func_hash)
             } else if !opindex_methods.is_empty() {
-                resolve_overload(opindex_methods, &index_types, compiler.ctx(), span)
+                resolve_overload(&opindex_methods, &index_types, compiler.ctx(), span)
                     .ok()
                     .map(|o| o.func_hash)
             } else {
@@ -978,7 +969,11 @@ fn analyze_index_target(
                     message: "type not found".to_string(),
                 })?;
 
-            class.find_methods("opIndex").to_vec()
+            class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndex)
+                .map(|v| v.to_vec())
+                .unwrap_or_default()
         };
 
         if !op_index_methods.is_empty() {
@@ -1253,7 +1248,8 @@ mod tests {
     use crate::emit::BytecodeEmitter;
     use angelscript_core::entries::{ClassEntry, FunctionEntry, PropertyEntry};
     use angelscript_core::{
-        FunctionDef, FunctionTraits, Param, Span, TypeKind, Visibility, primitives,
+        FunctionDef, FunctionTraits, OperatorBehavior, Param, Span, TypeKind, Visibility,
+        primitives,
     };
     use angelscript_parser::ast::{
         Expr, Ident, IdentExpr, IndexExpr, IndexItem, LiteralExpr, LiteralKind, MemberAccess,
@@ -1462,8 +1458,12 @@ mod tests {
         );
 
         let mut class = ClassEntry::ffi("IndexedContainer", TypeKind::script_object());
-        class.add_method("get_opIndex", getter_hash);
-        class.add_method("set_opIndex", setter_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpIndexGet, getter_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpIndexSet, setter_hash);
         registry.register_type(class.into()).unwrap();
 
         // Register get_opIndex method
@@ -1528,7 +1528,9 @@ mod tests {
         let opindex_hash = TypeHash::from_method(type_hash, "opIndex", &[primitives::INT32]);
 
         let mut class = ClassEntry::ffi("RefIndexedContainer", TypeKind::script_object());
-        class.add_method("opIndex", opindex_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpIndex, opindex_hash);
         registry.register_type(class.into()).unwrap();
 
         // Register opIndex method (non-const, returns reference)
@@ -1562,7 +1564,9 @@ mod tests {
         let opindex_hash = TypeHash::from_method(type_hash, "opIndex", &[primitives::INT32]);
 
         let mut class = ClassEntry::ffi("ConstIndexedContainer", TypeKind::script_object());
-        class.add_method("opIndex", opindex_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpIndex, opindex_hash);
         registry.register_type(class.into()).unwrap();
 
         // Register opIndex method (CONST - read-only)

@@ -651,6 +651,15 @@ pub enum CompilationError {
         span: Span,
     },
 
+    /// Type has no default constructor.
+    #[error("at {span}: type '{type_name}' has no default constructor")]
+    NoDefaultConstructor {
+        /// The type name.
+        type_name: String,
+        /// Where the error occurred.
+        span: Span,
+    },
+
     /// Base class does not have a default constructor for implicit super() call.
     #[error(
         "at {span}: base class '{base_class}' has no default constructor - derived class '{derived_class}' must explicitly call a base constructor with super(...)"
@@ -847,6 +856,7 @@ impl CompilationError {
             CompilationError::UnknownMethod { span, .. } => *span,
             CompilationError::ArgumentCountMismatch { span, .. } => *span,
             CompilationError::InvalidCast { span, .. } => *span,
+            CompilationError::NoDefaultConstructor { span, .. } => *span,
             CompilationError::NoBaseDefaultConstructor { span, .. } => *span,
             CompilationError::InvalidHandleType { span, .. } => *span,
             CompilationError::InvalidParameterType { span, .. } => *span,

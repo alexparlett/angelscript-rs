@@ -533,41 +533,57 @@ impl<'a> CompilationContext<'a> {
     ///
     /// Uses the vtable for lookup for classes (which contains all methods own + inherited),
     /// and the itable for interfaces.
-    /// This is the method to use for overload resolution at call sites.
-    pub fn find_methods(&self, type_hash: TypeHash, name: &str) -> Vec<TypeHash> {
-        // Check class in unit registry first
-        if let Some(class) = self.unit_registry.get(type_hash).and_then(|e| e.as_class()) {
-            return class.find_callable_methods(name);
+    ///
+    /// If `is_const_object` is true, only returns const methods (callable on const objects).
+    /// If `is_const_object` is false, returns all methods.
+    pub fn find_methods(
+        &self,
+        type_hash: TypeHash,
+        name: &str,
+        is_const_object: bool,
+    ) -> Vec<TypeHash> {
+        let candidates = {
+            // Check class in unit registry first
+            if let Some(class) = self.unit_registry.get(type_hash).and_then(|e| e.as_class()) {
+                class.find_callable_methods(name)
+            }
+            // Check class in global registry
+            else if let Some(class) = self
+                .global_registry
+                .get(type_hash)
+                .and_then(|e| e.as_class())
+            {
+                class.find_callable_methods(name)
+            }
+            // Check interface in unit registry
+            else if let Some(iface) = self
+                .unit_registry
+                .get(type_hash)
+                .and_then(|e| e.as_interface())
+            {
+                iface.itable.find_methods(name)
+            }
+            // Check interface in global registry
+            else if let Some(iface) = self
+                .global_registry
+                .get(type_hash)
+                .and_then(|e| e.as_interface())
+            {
+                iface.itable.find_methods(name)
+            } else {
+                return Vec::new();
+            }
+        };
+
+        if !is_const_object {
+            return candidates;
         }
 
-        // Check class in global registry
-        if let Some(class) = self
-            .global_registry
-            .get(type_hash)
-            .and_then(|e| e.as_class())
-        {
-            return class.find_callable_methods(name);
-        }
-
-        // Check interface in unit registry
-        if let Some(iface) = self
-            .unit_registry
-            .get(type_hash)
-            .and_then(|e| e.as_interface())
-        {
-            return iface.itable.find_methods(name);
-        }
-
-        // Check interface in global registry
-        if let Some(iface) = self
-            .global_registry
-            .get(type_hash)
-            .and_then(|e| e.as_interface())
-        {
-            return iface.itable.find_methods(name);
-        }
-
-        Vec::new()
+        // Filter to only const methods for const objects
+        candidates
+            .into_iter()
+            .filter(|&hash| self.get_function(hash).is_some_and(|f| f.def.is_const()))
+            .collect()
     }
 
     /// Check if `derived` is derived from `base` in the class hierarchy.

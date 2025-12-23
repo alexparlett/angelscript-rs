@@ -136,16 +136,8 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
                 };
 
                 if candidates.is_empty() {
-                    return Err(CompilationError::Other {
-                        message: format!(
-                            "type '{}' has no default {}",
-                            type_entry.qualified_name(),
-                            if uses_constructors {
-                                "constructor"
-                            } else {
-                                "factory"
-                            }
-                        ),
+                    return Err(CompilationError::NoDefaultConstructor {
+                        type_name: type_entry.qualified_name().to_string(),
                         span,
                     });
                 }
@@ -792,16 +784,13 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
         let result = compiler.compile_var_decl(&decl);
-        match result.unwrap_err() {
-            CompilationError::Other { message, .. } => {
-                assert!(
-                    message.contains("no default constructor"),
-                    "Expected error about missing default constructor, got: {}",
-                    message
-                );
-            }
-            other => panic!("Expected CompilationError::Other, got: {:?}", other),
-        }
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                CompilationError::NoDefaultConstructor { .. }
+            ),
+            "Expected NoDefaultConstructor error"
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! Handles switch statements with case values and default case.
 
-use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span};
+use angelscript_core::{CompilationError, DataType, Span};
 use angelscript_parser::ast::{Expr, SwitchStmt, UnaryOp};
 
 use crate::bytecode::OpCode;
@@ -49,8 +49,8 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
             expr_compiler.infer(switch.expr)?
         };
 
-        // Validate switch type - must be primitive or have opEquals
-        let equals_method = self.validate_switch_type(&switch_info.data_type, span)?;
+        // Validate switch type - must be numeric, bool, or enum
+        self.validate_switch_type(&switch_info.data_type, span)?;
 
         // Enter switch context (for break handling)
         self.emitter.enter_switch();
@@ -83,7 +83,7 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
                     expr_compiler.check(value, &switch_info.data_type)?;
 
                     // Emit equality check
-                    self.emit_equality(&switch_info.data_type, equals_method, value.span())?;
+                    self.emit_equality();
 
                     // Jump to case body if equal
                     let jump = self.emitter.emit_jump(OpCode::JumpIfTrue);
@@ -141,13 +141,13 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
 
     /// Validate that the switch expression type is valid.
     ///
-    /// Returns the opEquals method hash if the type is an object type.
+    /// Only numeric primitives, bools, and enums are supported in switch statements.
     fn validate_switch_type(
         &self,
         data_type: &DataType,
         span: angelscript_core::Span,
     ) -> Result<Option<angelscript_core::TypeHash>> {
-        // Primitives are always valid
+        // Numeric primitives and bools are valid
         if data_type.is_primitive() {
             return Ok(None);
         }
@@ -157,39 +157,14 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
             return Ok(None);
         }
 
-        // Objects need opEquals
-        let type_entry =
-            self.ctx
-                .get_type(data_type.type_hash)
-                .ok_or_else(|| CompilationError::Other {
-                    message: format!("unknown type for switch: {:?}", data_type.type_hash),
-                    span,
-                })?;
+        // Other types (objects, handles, etc.) are not supported
+        let type_name = self
+            .ctx
+            .get_type(data_type.type_hash)
+            .map(|t| t.qualified_name().to_string())
+            .unwrap_or_else(|| format!("{:?}", data_type.type_hash));
 
-        let class = type_entry
-            .as_class()
-            .ok_or_else(|| CompilationError::Other {
-                message: format!(
-                    "type '{}' cannot be used in switch",
-                    type_entry.qualified_name()
-                ),
-                span,
-            })?;
-
-        // Look up opEquals
-        let equals = class
-            .behaviors
-            .get_operator(OperatorBehavior::OpEquals)
-            .and_then(|ops| ops.first().copied())
-            .ok_or_else(|| CompilationError::Other {
-                message: format!(
-                    "type '{}' does not support switch (missing opEquals)",
-                    class.name
-                ),
-                span,
-            })?;
-
-        Ok(Some(equals))
+        Err(CompilationError::InvalidSwitchType { type_name, span })
     }
 
     /// Validate that a case value is a compile-time constant.
@@ -260,32 +235,11 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
         }
     }
 
-    /// Emit equality comparison.
-    fn emit_equality(
-        &mut self,
-        data_type: &DataType,
-        equals_method: Option<angelscript_core::TypeHash>,
-        span: Span,
-    ) -> Result<()> {
-        if data_type.is_primitive() || data_type.is_enum {
-            // Use generic equality opcode - VM determines types from stack values
-            // Enums are ints under the hood, so they use the same opcode
-            self.emitter.emit(OpCode::Eq);
-        } else {
-            // Call opEquals method
-            if let Some(method) = equals_method {
-                self.emitter.emit_call_method(method, 1);
-            } else {
-                let type_name = self
-                    .ctx
-                    .get_type(data_type.type_hash)
-                    .map(|t| t.qualified_name().to_string())
-                    .unwrap_or_else(|| format!("{:?}", data_type.type_hash));
-
-                return Err(CompilationError::InvalidSwitchType { type_name, span });
-            }
-        }
-        Ok(())
+    /// Emit equality comparison for primitives and enums.
+    fn emit_equality(&mut self) {
+        // Use generic equality opcode - VM determines types from stack values
+        // Enums are ints under the hood, so they use the same opcode
+        self.emitter.emit(OpCode::Eq);
     }
 }
 

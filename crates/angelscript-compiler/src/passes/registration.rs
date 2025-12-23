@@ -42,7 +42,7 @@ use angelscript_parser::ast::{
 };
 use rustc_hash::FxHashMap;
 
-use angelscript_parser::ast::{Expr, LiteralKind, TypeBase, UnaryOp};
+use angelscript_parser::ast::TypeBase;
 
 use crate::context::CompilationContext;
 use crate::passes::{PendingInheritance, PendingResolutions};
@@ -953,28 +953,17 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         // Compute hash using the qualified name
         let type_hash = TypeHash::from_name(&qualified_name);
 
-        // Resolve the variable's type (special handling for auto)
-        let is_auto = matches!(var.ty.base, TypeBase::Auto);
+        // Reject auto type for global variables (not supported, like in C)
+        if matches!(var.ty.base, TypeBase::Auto) {
+            self.ctx.add_error(CompilationError::InvalidOperation {
+                message: "'auto' type is not supported for global variables".to_string(),
+                span: var.span,
+            });
+            return;
+        }
 
-        let data_type = if is_auto {
-            // Auto type - must have initializer to infer type from
-            let Some(init) = &var.init else {
-                self.ctx.add_error(CompilationError::Other {
-                    message: "auto global variable must have an initializer".to_string(),
-                    span: var.span,
-                });
-                return;
-            };
-
-            // Infer type from initializer without bytecode emission
-            match self.infer_global_init_type(init) {
-                Ok(dt) => dt,
-                Err(e) => {
-                    self.ctx.add_error(e);
-                    return;
-                }
-            }
-        } else {
+        // Resolve the variable's type
+        let data_type = {
             // Normal type resolution
             let mut resolver = TypeResolver::new(self.ctx);
             match resolver.resolve(&var.ty) {
@@ -1020,94 +1009,6 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.globals_registered += 1;
-        }
-    }
-
-    /// Infer the type of a global variable initializer without bytecode emission.
-    ///
-    /// For auto globals, we need to determine the type from the initializer expression.
-    /// This is done by analyzing the expression structure rather than compiling it.
-    fn infer_global_init_type(&self, expr: &Expr<'_>) -> Result<DataType, CompilationError> {
-        use angelscript_core::primitives;
-
-        match expr {
-            Expr::Literal(lit) => {
-                let type_hash = match &lit.kind {
-                    LiteralKind::Int(v) => {
-                        // Use int32 for values that fit, int64 otherwise
-                        if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
-                            primitives::INT32
-                        } else {
-                            primitives::INT64
-                        }
-                    }
-                    LiteralKind::Float(_) => primitives::FLOAT,
-                    LiteralKind::Double(_) => primitives::DOUBLE,
-                    LiteralKind::Bool(_) => primitives::BOOL,
-                    LiteralKind::String(_) => self
-                        .ctx
-                        .string_type_hash()
-                        .ok_or(CompilationError::NoStringFactory { span: lit.span })?,
-                    LiteralKind::Null => {
-                        return Err(CompilationError::Other {
-                            message: "cannot infer type from null literal".to_string(),
-                            span: lit.span,
-                        });
-                    }
-                };
-                Ok(DataType::simple(type_hash))
-            }
-
-            Expr::Ident(ident) => {
-                // Look up identifier - could be another global
-                let name = ident.ident.name;
-
-                // Try to find as a global property by qualified name
-                let qualified_name = self.qualified_name(name);
-                let hash = TypeHash::from_name(&qualified_name);
-                if let Some(global) = self.ctx.get_global_entry(hash) {
-                    return Ok(global.data_type);
-                }
-
-                // Try unqualified name (global namespace)
-                let hash = TypeHash::from_name(name);
-                if let Some(global) = self.ctx.get_global_entry(hash) {
-                    return Ok(global.data_type);
-                }
-
-                Err(CompilationError::Other {
-                    message: format!(
-                        "cannot infer type from '{}' - only literals and globals are supported for auto global initializers",
-                        name
-                    ),
-                    span: ident.span,
-                })
-            }
-
-            Expr::Paren(p) => self.infer_global_init_type(p.expr),
-
-            Expr::Unary(unary) => {
-                // For unary operators, infer from operand type
-                let operand_type = self.infer_global_init_type(unary.operand)?;
-
-                match unary.op {
-                    // Numeric operators preserve type
-                    UnaryOp::Neg | UnaryOp::Plus | UnaryOp::BitwiseNot => Ok(operand_type),
-                    // Logical not always returns bool
-                    UnaryOp::LogicalNot => Ok(DataType::simple(primitives::BOOL)),
-                    // Increment/decrement and handle-of are not valid in global initializers
-                    _ => Err(CompilationError::Other {
-                        message: "increment, decrement, and handle-of operators are not supported in auto global initializers".to_string(),
-                        span: unary.span,
-                    }),
-                }
-            }
-
-            _ => Err(CompilationError::Other {
-                message: "auto global initializer must be a literal or simple expression"
-                    .to_string(),
-                span: expr.span(),
-            }),
         }
     }
 
@@ -3179,11 +3080,11 @@ mod tests {
     }
 
     // ==========================================================================
-    // Auto type inference for globals
+    // Auto globals are not supported
     // ==========================================================================
 
     #[test]
-    fn auto_global_int_literal() {
+    fn auto_global_is_error() {
         let (registry, arena) = setup_context();
         let source = "auto x = 42;";
         let script = Parser::parse(source, &arena).unwrap();
@@ -3192,225 +3093,11 @@ mod tests {
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
         let output = pass.run(&script);
 
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        assert_eq!(output.globals_registered, 1);
-
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::INT32);
-    }
-
-    #[test]
-    fn auto_global_large_int_literal() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = 9999999999;"; // Larger than i32
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::INT64);
-    }
-
-    #[test]
-    fn auto_global_float_literal() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = 3.14f;";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::FLOAT);
-    }
-
-    #[test]
-    fn auto_global_double_literal() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = 3.14;";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::DOUBLE);
-    }
-
-    #[test]
-    fn auto_global_bool_literal() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = true;";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::BOOL);
-    }
-
-    #[test]
-    fn auto_global_negative_int() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = -42;";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::INT32);
-    }
-
-    #[test]
-    fn auto_global_logical_not() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = !false;";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::BOOL);
-    }
-
-    #[test]
-    fn auto_global_parenthesized() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = (42);";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::INT32);
-    }
-
-    #[test]
-    fn auto_global_from_other_global() {
-        let (registry, arena) = setup_context();
-        let source = "int y = 10; auto x = y;";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors: {:?}",
-            output.errors
-        );
-        let x_hash = TypeHash::from_name("x");
-        let global = ctx.get_global_entry(x_hash).unwrap();
-        assert_eq!(global.data_type.type_hash, primitives::INT32);
-    }
-
-    #[test]
-    fn auto_global_no_initializer_error() {
-        let (registry, arena) = setup_context();
-        let source = "auto x;";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
         assert_eq!(output.errors.len(), 1);
         assert!(
             output.errors[0]
                 .to_string()
-                .contains("must have an initializer")
-        );
-    }
-
-    #[test]
-    fn auto_global_null_literal_error() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = null;";
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert_eq!(output.errors.len(), 1);
-        assert!(output.errors[0].to_string().contains("null"));
-    }
-
-    #[test]
-    fn auto_global_unsupported_expr_error() {
-        let (registry, arena) = setup_context();
-        let source = "auto x = 1 + 2;"; // Binary expression not supported
-        let script = Parser::parse(source, &arena).unwrap();
-
-        let mut ctx = CompilationContext::new(&registry);
-        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
-
-        assert_eq!(output.errors.len(), 1);
-        assert!(
-            output.errors[0]
-                .to_string()
-                .contains("literal or simple expression")
+                .contains("'auto' type is not supported for global variables")
         );
     }
 

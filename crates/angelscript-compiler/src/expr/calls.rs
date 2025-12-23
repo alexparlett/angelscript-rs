@@ -96,23 +96,24 @@ fn compile_ident_call<'ast>(
     if ident.scope.is_none()
         && let Some(class_hash) = compiler.current_class()
     {
-        let candidates = compiler.ctx().find_methods(class_hash, name);
-        if !candidates.is_empty() {
-            // Get 'this' const status from the declared parameter
-            let this_is_const = compiler
-                .ctx()
-                .get_local("this")
-                .map(|v| v.is_const)
-                .unwrap_or(false);
+        // Check if 'this' is const (from the declared parameter in const methods)
+        let this_is_const = compiler
+            .ctx()
+            .get_local("this")
+            .map(|v| v.is_const)
+            .unwrap_or(false);
 
+        // Check if any methods exist with this name (filtering by const)
+        let candidates = compiler.ctx().find_methods(class_hash, name, this_is_const);
+        if !candidates.is_empty() {
             // Push 'this' onto the stack
             compiler.emitter().emit_get_this();
 
-            // Create the object type with const if applicable
-            let mut obj_type = DataType::with_handle(class_hash, false);
-            if this_is_const {
-                obj_type.is_const = true;
-            }
+            // Create the object type with const if we're in a const method
+            let obj_type = DataType {
+                is_const: this_is_const,
+                ..DataType::with_handle(class_hash, false)
+            };
 
             // Compile as method call
             return compile_method_call(compiler, &obj_type, name, call.args, span);
@@ -513,9 +514,12 @@ pub fn compile_method_call(
     call_args: &[angelscript_parser::ast::Argument<'_>],
     span: Span,
 ) -> Result<ExprInfo> {
-    // Find method candidates and check if it's an interface (all in one borrow)
+    // Find method candidates filtered by const-correctness
+    let is_const_obj = obj_type.is_effectively_const();
     let (candidates, is_interface) = {
-        let candidates = compiler.ctx().find_methods(obj_type.type_hash, method_name);
+        let candidates = compiler
+            .ctx()
+            .find_methods(obj_type.type_hash, method_name, is_const_obj);
 
         if candidates.is_empty() {
             let type_name = compiler
@@ -536,7 +540,7 @@ pub fn compile_method_call(
             .map(|e| e.is_interface())
             .unwrap_or(false);
 
-        (candidates.to_vec(), is_interface)
+        (candidates, is_interface)
     };
 
     // Route lambda arguments to specialized handler
@@ -562,8 +566,9 @@ pub fn compile_method_call(
     // Resolve overload
     let overload = resolve_overload(&candidates, &arg_types, compiler.ctx(), span)?;
 
-    // Get method info for const-correctness, return type, and virtual dispatch
-    let (is_const_method, return_type, is_virtual_method, is_final_method) = {
+    // Get method info for return type and virtual dispatch
+    // Note: const-correctness is already handled by find_methods_for_object filtering
+    let (return_type, is_virtual_method, is_final_method) = {
         let func = compiler
             .ctx()
             .get_function(overload.func_hash)
@@ -571,22 +576,11 @@ pub fn compile_method_call(
                 message: format!("Method not found: {:?}", overload.func_hash),
             })?;
         (
-            func.def.is_const(),
             func.def.return_type,
             func.def.is_virtual(),
             func.def.is_final(),
         )
     };
-
-    if obj_type.is_effectively_const() && !is_const_method {
-        return Err(CompilationError::CannotModifyConst {
-            message: format!(
-                "cannot call non-const method '{}' on const object",
-                method_name
-            ),
-            span,
-        });
-    }
 
     // Apply argument conversions
     apply_argument_conversions(compiler, &overload)?;
@@ -697,9 +691,10 @@ fn compile_lambda_method_call(
 ) -> Result<ExprInfo> {
     // Multiple candidates with lambda args is an error per AngelScript spec
     if candidates.len() != 1 {
-        return Err(CompilationError::TypeMismatch {
-            message: "lambda with untyped parameters requires unambiguous method overload; \
-                      use explicit parameter types or ensure only one overload matches"
+        return Err(CompilationError::AmbiguousOverload {
+            name: "method".to_string(),
+            candidates: "lambda with untyped parameters requires unambiguous method overload; \
+                         use explicit parameter types or ensure only one overload matches"
                 .to_string(),
             span,
         });
@@ -708,6 +703,7 @@ fn compile_lambda_method_call(
     let method_hash = candidates[0];
 
     // Get method info
+    // Note: const-correctness is already handled by find_methods_for_object filtering
     let (
         param_types,
         required_count,
@@ -737,17 +733,6 @@ fn compile_lambda_method_call(
                 func.def.is_final(),
             )
         };
-
-    // Const-correctness check
-    if obj_type.is_effectively_const() && !is_const_method {
-        return Err(CompilationError::CannotModifyConst {
-            message: format!(
-                "cannot call non-const method '{}' on const object",
-                method_name
-            ),
-            span,
-        });
-    }
 
     // Check argument count
     let arg_count = call_args.len();
@@ -1438,12 +1423,14 @@ mod tests {
         let mut obj_type = DataType::simple(type_hash);
         obj_type.is_const = true;
 
+        // When object is const, non-const methods are filtered out in find_methods,
+        // so we get UnknownMethod (no callable method with that name)
         let result =
             compile_method_call(&mut compiler, &obj_type, "setValue", &[], Span::default());
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            CompilationError::CannotModifyConst { .. }
+            CompilationError::UnknownMethod { .. }
         ));
     }
 
@@ -2020,7 +2007,7 @@ mod tests {
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         // Calling on non-const object should find both methods
-        let candidates = compiler.ctx().find_methods(type_hash, "get");
+        let candidates = compiler.ctx().find_methods(type_hash, "get", false);
         assert_eq!(candidates.len(), 2);
     }
 
@@ -2700,11 +2687,19 @@ mod tests {
 
         let result = compile_call(&mut compiler, &call);
 
+        // When this is const, non-const methods are filtered out in find_methods,
+        // so we get an error because there is no callable method with that name
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CompilationError::CannotModifyConst { .. }
-        ));
+        assert!(
+            matches!(
+                result.as_ref().unwrap_err(),
+                CompilationError::UnknownMethod { .. }
+                    | CompilationError::UnknownVariable { .. }
+                    | CompilationError::UnknownFunction { .. }
+            ),
+            "Expected UnknownMethod, UnknownVariable, or UnknownFunction, got: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]

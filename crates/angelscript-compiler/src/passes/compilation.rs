@@ -957,13 +957,8 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         }
     }
 
-    // ==========================================================================
-    // Test Accessors
-    // ==========================================================================
-
-    /// Get a reference to the bytecode emitter (for testing).
-    #[cfg(test)]
-    pub(crate) fn emitter(&self) -> &BytecodeEmitter {
+    /// Get a reference to the bytecode emitter.
+    pub fn emitter(&self) -> &BytecodeEmitter {
         &self.emitter
     }
 }
@@ -2099,129 +2094,36 @@ mod tests {
     }
 
     // =========================================================================
-    // Auto Type Global Variable Tests (47b6)
-    // Tests that compile_global_var correctly handles auto-typed globals
-    // by looking up the type from registration instead of resolving directly
+    // Auto Type Global Variable Tests
+    // Auto type is not supported for global variables
     // =========================================================================
 
     #[test]
-    fn compile_auto_global_int_literal() {
+    fn compile_auto_global_rejected() {
+        use crate::passes::registration::RegistrationPass;
+        use angelscript_parser::Parser;
+        use bumpalo::Bump;
+
         let source = "auto x = 42;";
-        let (output, _constants) = full_compile(source);
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
-        );
-        // Global init should exist
-        assert_eq!(output.global_inits.len(), 1);
-    }
+        let arena = Bump::new();
+        let script = Parser::parse(source, &arena).unwrap();
 
-    // Note: string literal test omitted - requires string factory registration
-    // which is tested via integration tests (test_types)
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
 
-    #[test]
-    fn compile_auto_global_bool_literal() {
-        let source = "auto b = true;";
-        let (output, _constants) = full_compile(source);
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
-        );
-        assert_eq!(output.global_inits.len(), 1);
-    }
+        // Run registration pass which should reject auto globals
+        let reg_pass = RegistrationPass::new(&mut ctx, UnitId::new(1));
+        let reg_output = reg_pass.run(&script);
 
-    #[test]
-    fn compile_auto_global_float_literal() {
-        let source = "auto f = 3.14f;";
-        let (output, _constants) = full_compile(source);
         assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
+            reg_output.errors.iter().any(|e| matches!(
+                e,
+                CompilationError::InvalidOperation { message, .. }
+                    if message.contains("auto")
+            )),
+            "Expected 'auto' error in registration, got: {:?}",
+            reg_output.errors
         );
-        assert_eq!(output.global_inits.len(), 1);
-    }
-
-    #[test]
-    fn compile_auto_global_double_literal() {
-        let source = "auto d = 3.14;";
-        let (output, _constants) = full_compile(source);
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
-        );
-        assert_eq!(output.global_inits.len(), 1);
-    }
-
-    #[test]
-    fn compile_auto_global_negative_int() {
-        let source = "auto x = -42;";
-        let (output, _constants) = full_compile(source);
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
-        );
-        assert_eq!(output.global_inits.len(), 1);
-    }
-
-    #[test]
-    fn compile_auto_global_not_bool() {
-        let source = "auto x = !false;";
-        let (output, _constants) = full_compile(source);
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
-        );
-        assert_eq!(output.global_inits.len(), 1);
-    }
-
-    #[test]
-    fn compile_auto_global_from_other_global() {
-        let source = r#"
-            int first = 100;
-            auto second = first;
-        "#;
-        let (output, _constants) = full_compile(source);
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
-        );
-        // Two global inits
-        assert_eq!(output.global_inits.len(), 2);
-    }
-
-    #[test]
-    fn compile_auto_global_parenthesized() {
-        let source = "auto x = (42);";
-        let (output, _constants) = full_compile(source);
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
-        );
-        assert_eq!(output.global_inits.len(), 1);
-    }
-
-    #[test]
-    fn compile_multiple_auto_globals() {
-        let source = r#"
-            auto a = 1;
-            auto b = 2.0;
-            auto c = true;
-        "#;
-        let (output, _constants) = full_compile(source);
-        assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
-        );
-        assert_eq!(output.global_inits.len(), 3);
     }
 
     #[test]
