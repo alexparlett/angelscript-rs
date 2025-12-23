@@ -278,8 +278,9 @@ impl Context {
         };
 
         // For generic calling convention, use generic_params; otherwise use params
-        // Variadic parameters are excluded from the function hash
+        // Variadic parameters are excluded from the function hash but included in params
         let (param_hashes, params, is_variadic) = if meta.is_generic {
+            // Hash excludes variadic params (they don't affect signature)
             let hashes: Vec<TypeHash> = meta
                 .generic_params
                 .iter()
@@ -287,10 +288,10 @@ impl Context {
                 .map(|p| p.type_hash)
                 .collect();
 
+            // Params includes all params (variadic last, for type checking extra args)
             let params: Vec<Param> = meta
                 .generic_params
                 .iter()
-                .filter(|p| !p.is_variadic)
                 .map(|p| {
                     // Create DataType with appropriate ref_modifier from metadata
                     let mut data_type = match p.ref_mode {
@@ -305,7 +306,8 @@ impl Context {
                     if p.is_const {
                         data_type = data_type.as_const();
                     }
-                    let param = if p.default_value.is_some() {
+                    // Variadic param should have default (0 extra args is valid)
+                    let param = if p.default_value.is_some() || p.is_variadic {
                         Param::with_default("", data_type)
                     } else {
                         Param::new("", data_type)

@@ -59,8 +59,8 @@ typedef array<string> StringArray;
 EntityId id;
 StringArray names;
 
-// Auto type (type inference)
-auto inferredInt = 42;
-auto inferredString = "hello";
-auto negativeInt = -42;
-auto inferredBool = !false;
+// Explicit type globals (auto not supported for globals)
+int inferredInt = 42;
+string inferredString = "hello";
+int negativeInt = -42;
+bool inferredBool = !false;

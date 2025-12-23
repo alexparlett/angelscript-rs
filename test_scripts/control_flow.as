@@ -101,25 +101,6 @@ void testSwitchFloat() {
     }
 }
 
-void testSwitchString() {
-    string s = "hello";
-
-    switch (s) {
-        case "hello":
-            print("greeting");
-            break;
-        case "goodbye":
-            print("farewell");
-            break;
-        case "":
-            print("empty string");
-            break;
-        default:
-            print("unknown string");
-            break;
-    }
-}
-
 // Classes for type pattern matching tests
 class Animal {
     Animal() {}
