@@ -4,10 +4,11 @@
 
 Rewrite the Completion pass to:
 1. Take `RegistrationResult` as input
-2. Build a name index for resolution
-3. Transform unresolved entries into resolved entries
-4. Populate the registry
-5. Handle inheritance, vtables, and hash indexes
+2. **Resolve using directives** into namespace tree edges (FIRST)
+3. Build a name index for resolution
+4. Transform unresolved entries into resolved entries
+5. Populate the registry (namespace tree)
+6. Handle inheritance, vtables, and hash indexes
 
 **Files:**
 - `crates/angelscript-compiler/src/passes/completion.rs` (rewrite)
@@ -25,7 +26,7 @@ use angelscript_core::{
     PropertyEntry, QualifiedName, Span, TypeEntry, TypeHash, TypeKind, TypeSource,
     UnresolvedClass, UnresolvedType, Visibility,
 };
-use angelscript_registry::SymbolRegistry;
+use angelscript_registry::{SymbolRegistry, ResolutionContext, ResolutionResult};
 use rustc_hash::FxHashMap;
 
 use crate::passes::RegistrationResult;
@@ -98,10 +99,15 @@ impl<'reg, 'global> CompletionPass<'reg, 'global> {
 
     /// Run the completion pass.
     pub fn run(mut self, input: RegistrationResult) -> CompletionResult {
+        // Phase 0: Resolve using directives FIRST
+        // Creates namespace tree edges for using namespace resolution.
+        // Must happen before type resolution so lookups can traverse using edges.
+        self.resolve_using_directives(&input);
+
         // Phase 1: Build name index from unresolved entries
         self.build_name_index(&input);
 
-        // Phase 2: Register all types (creates entries in registry)
+        // Phase 2: Register all types (creates entries in registry namespace tree)
         self.register_types(&input);
 
         // Phase 3: Resolve and register functions
@@ -123,6 +129,53 @@ impl<'reg, 'global> CompletionPass<'reg, 'global> {
         self.registry.build_hash_indexes();
 
         self.result
+    }
+}
+```
+
+---
+
+## Phase 0: Resolve Using Directives
+
+```rust
+impl<'reg, 'global> CompletionPass<'reg, 'global> {
+    /// Resolve using directives to graph edges.
+    ///
+    /// The namespace tree was already built during the Registration pass.
+    /// This MUST happen before type resolution so that the namespace tree
+    /// can traverse `Uses` edges when looking up types.
+    fn resolve_using_directives(&mut self, input: &RegistrationResult) {
+        for directive in &input.using_directives {
+            if let Err(e) = self.resolve_single_using_directive(directive) {
+                self.result.errors.push(e);
+            }
+        }
+    }
+
+    fn resolve_single_using_directive(
+        &mut self,
+        directive: &UnresolvedUsingDirective,
+    ) -> Result<(), CompilationError> {
+        let tree = self.registry.tree_mut();
+
+        // Get source namespace (must exist - it was created during registration)
+        let source_node = tree.get_path(&directive.source_namespace)
+            .ok_or_else(|| CompilationError::InternalError {
+                message: format!("Source namespace {} not found", directive.source_namespace.join("::")),
+                span: directive.span,
+            })?;
+
+        // Get target namespace (must exist, or it's an error)
+        let target_node = tree.get_path(&directive.target_namespace)
+            .ok_or_else(|| CompilationError::UnknownNamespace {
+                name: directive.target_namespace.join("::"),
+                span: directive.span,
+            })?;
+
+        // Add the Uses edge (non-transitive)
+        tree.add_using_directive(source_node, target_node);
+
+        Ok(())
     }
 }
 ```
@@ -160,6 +213,10 @@ impl<'reg, 'global> CompletionPass<'reg, 'global> {
     }
 
     /// Resolve an UnresolvedType to a QualifiedName.
+    ///
+    /// Uses the namespace tree for resolution, which handles:
+    /// 1. Current namespace and ancestors (walk up to root)
+    /// 2. Using directive namespaces (via `Uses` edges, non-transitive)
     fn resolve_type_name(&self, unresolved: &UnresolvedType) -> Result<QualifiedName, CompilationError> {
         // Handle void
         if unresolved.is_void() {
@@ -184,31 +241,57 @@ impl<'reg, 'global> CompletionPass<'reg, 'global> {
             }
             return Err(CompilationError::UnknownType {
                 name: unresolved.name.clone(),
-                span: Span::default(),
+                span: unresolved.span,
             });
         }
 
-        // Try current namespace (innermost to outermost)
-        for i in (0..=unresolved.context_namespace.len()).rev() {
-            let ns = unresolved.context_namespace[..i].to_vec();
-            let qn = QualifiedName::new(&unresolved.name, ns);
-            if self.type_exists(&qn) {
-                return Ok(qn);
+        // Use namespace tree resolution which handles:
+        // 1. Current namespace and walk up to root
+        // 2. Using directive namespaces at current and parent scopes (non-transitive)
+        //
+        // Note: We use get_path (not get_or_create_path) because the namespace tree
+        // was already built during Registration. If the namespace doesn't exist,
+        // fall back to root.
+        let ctx = ResolutionContext {
+            current_namespace: self.registry.tree().get_path(&unresolved.context_namespace)
+                .unwrap_or_else(|| self.registry.tree().root()),
+        };
+
+        // Use checked resolution to detect ambiguity
+        match self.registry.tree().resolve_type_with_location_checked(&unresolved.name, &ctx) {
+            ResolutionResult::Found((entry, ns_node)) => {
+                let path = self.registry.tree().get_namespace_path(ns_node);
+                return Ok(QualifiedName::new(entry.simple_name(), path));
+            }
+            ResolutionResult::Ambiguous(matches) => {
+                let candidates: Vec<String> = matches.iter()
+                    .map(|(ns, (entry, _))| {
+                        let path = self.registry.tree().get_namespace_path(*ns);
+                        QualifiedName::new(entry.simple_name(), path).to_string()
+                    })
+                    .collect();
+                return Err(CompilationError::AmbiguousType {
+                    name: unresolved.name.clone(),
+                    candidates,
+                    span: unresolved.span,
+                });
+            }
+            ResolutionResult::NotFound => {
+                // Continue to check global registry
             }
         }
 
-        // Try imports
-        for import in &unresolved.imports {
-            let ns: Vec<String> = import.split("::").map(|s| s.to_string()).collect();
-            let qn = QualifiedName::new(&unresolved.name, ns);
-            if self.type_exists(&qn) {
-                return Ok(qn);
-            }
+        // Also check global registry for FFI types
+        if let Some(qn) = self.global_registry.resolve_type_name(
+            &unresolved.name,
+            &unresolved.context_namespace,
+        ) {
+            return Ok(qn);
         }
 
         Err(CompilationError::UnknownType {
             name: unresolved.name.clone(),
-            span: Span::default(),
+            span: unresolved.span,
         })
     }
 
@@ -823,6 +906,142 @@ mod tests {
         let class = player.as_class().unwrap();
         // Check field has correct type hash
     }
+
+    #[test]
+    fn complete_using_namespace() {
+        let (registry, result) = complete(r#"
+            namespace Utils {
+                class Helper {}
+            }
+            namespace Game {
+                using Utils;
+                class Player {
+                    Helper@ helper;  // Resolved via using directive
+                }
+            }
+        "#);
+
+        assert!(!result.has_errors(), "Errors: {:?}", result.errors);
+
+        // Player should have field with Utils::Helper type
+        let player = registry.get_type_by_name(
+            &QualifiedName::new("Player", vec!["Game".into()])
+        ).unwrap();
+        let class = player.as_class().unwrap();
+        // Field type hash should match Utils::Helper
+    }
+
+    #[test]
+    fn using_namespace_not_transitive() {
+        // A uses B, B uses C -> A should NOT see C
+        let (_registry, result) = complete(r#"
+            namespace C {
+                class CType {}
+            }
+            namespace B {
+                using C;
+                class BType {}
+            }
+            namespace A {
+                using B;
+                class AType {
+                    CType@ c;  // ERROR: CType not visible (using is non-transitive)
+                }
+            }
+        "#);
+
+        // Should have an error - CType not found
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn unknown_using_namespace_error() {
+        let (_registry, result) = complete(r#"
+            namespace Game {
+                using DoesNotExist;
+            }
+        "#);
+
+        // Should have an error - namespace doesn't exist
+        assert!(result.has_errors());
+        assert!(result.errors.iter().any(|e| {
+            matches!(e, CompilationError::UnknownNamespace { .. })
+        }));
+    }
+
+    #[test]
+    fn ambiguous_type_error() {
+        // A uses both B and C, which both define Helper
+        let (_registry, result) = complete(r#"
+            namespace B {
+                class Helper {}
+            }
+            namespace C {
+                class Helper {}
+            }
+            namespace A {
+                using B;
+                using C;
+                class AType {
+                    Helper@ h;  // ERROR: Ambiguous - could be B::Helper or C::Helper
+                }
+            }
+        "#);
+
+        // Should have an ambiguity error
+        assert!(result.has_errors());
+        assert!(result.errors.iter().any(|e| {
+            matches!(e, CompilationError::AmbiguousType { .. })
+        }));
+    }
+
+    #[test]
+    fn explicit_global_scope_no_using() {
+        // ::Name should NOT use using directives
+        let (_registry, result) = complete(r#"
+            namespace Utils {
+                class Helper {}
+            }
+            namespace Game {
+                using Utils;
+                class Player {
+                    ::Helper@ h;  // ERROR: Helper is not in global scope
+                }
+            }
+        "#);
+
+        // Should have an error - Helper not in global scope
+        assert!(result.has_errors());
+        assert!(result.errors.iter().any(|e| {
+            matches!(e, CompilationError::UnknownType { .. })
+        }));
+    }
+
+    #[test]
+    fn parent_scope_using_inherited() {
+        // Child namespace should inherit parent's using directives
+        let (registry, result) = complete(r#"
+            namespace Utils {
+                class Helper {}
+            }
+            namespace Game {
+                using Utils;
+                namespace Entities {
+                    class Player {
+                        Helper@ h;  // Should resolve via parent's using directive
+                    }
+                }
+            }
+        "#);
+
+        assert!(!result.has_errors(), "Errors: {:?}", result.errors);
+
+        // Player should have field with Utils::Helper type
+        let player = registry.get_type_by_name(
+            &QualifiedName::new("Player", vec!["Game".into(), "Entities".into()])
+        ).unwrap();
+        assert!(player.as_class().is_some());
+    }
 }
 ```
 
@@ -830,8 +1049,9 @@ mod tests {
 
 ## Dependencies
 
-- Phase 1-3: Core types and RegistrationResult
-- Phase 4: Updated registry with name-based lookup
+- Phase 1-3: Core types and RegistrationResult (including `UnresolvedUsingDirective`)
+- Phase 4: Updated registry with namespace tree (`NamespaceTree` from 04b design)
+- Phase 4b: Namespace tree design with `Uses` edges for using directive resolution
 
 ---
 

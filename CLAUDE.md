@@ -40,17 +40,26 @@ Index registry by `QualifiedName` (namespace, name) instead of `TypeHash`. TypeH
 
 ### Implementation Phases
 1. **Core Types** (`angelscript-core`): `QualifiedName`, `UnresolvedType`, `UnresolvedParam`, `UnresolvedSignature`
-2. **Entry Types**: Update `ClassEntry`, `InterfaceEntry`, `FuncdefEntry`, `FunctionDef` with lazy TypeHash
-3. **Registry**: Rewrite `SymbolRegistry` with `QualifiedName` as primary key
-4. **Registration**: Store `UnresolvedType` instead of resolving immediately
-5. **Completion**: Resolve all types, build hash indexes
-6. **Compilation**: Use resolved types and hash lookups
+2. **Unresolved Entries** (`angelscript-core`): `UnresolvedClass`, `UnresolvedInterface`, etc.
+3. **Registration Result** (`angelscript-compiler`): `RegistrationResult` struct
+4. **Registry Updates** (`angelscript-registry`): `QualifiedName`-based lookup
+5. **NamespaceTree** (`angelscript-registry`): Tree structure with petgraph
+6. **NamespaceTree Storage** (`angelscript-registry`): Type/function registration and resolution
+7. **SymbolRegistry Integration** (`angelscript-registry`): Integrate tree into registry
+8. **Registration Pass** (`angelscript-compiler`): Build tree, collect unresolved entries
+9. **Completion Pass** (`angelscript-compiler`): Resolve using directives, transform types
+10. **Compilation Pass** (`angelscript-compiler`): Use resolved registry
 
 ### Design Documents
 - `tasks/qualified_name_registry.md` - High-level design
 - `tasks/qualified_name_registry/01_core_types.md` - Core type implementations
-- `tasks/qualified_name_registry/02_entry_types.md` - Entry type updates
-- `tasks/qualified_name_registry/03_registry.md` - Registry rewrite
-- `tasks/qualified_name_registry/04_registration.md` - Registration pass
-- `tasks/qualified_name_registry/05_completion.md` - Completion pass
-- `tasks/qualified_name_registry/06_compilation.md` - Compilation pass
+- `tasks/qualified_name_registry/02_unresolved_entries.md` - Unresolved entry types
+- `tasks/qualified_name_registry/03_registration_result.md` - Registration result
+- `tasks/qualified_name_registry/04_registry.md` - Registry updates
+- `tasks/qualified_name_registry/05_namespace_tree.md` - NamespaceTree core
+- `tasks/qualified_name_registry/06_namespace_tree_storage.md` - Tree storage/resolution
+- `tasks/qualified_name_registry/07_symbol_registry_integration.md` - Registry integration
+- `tasks/qualified_name_registry/08_registration.md` - Registration pass
+- `tasks/qualified_name_registry/09_completion.md` - Completion pass
+- `tasks/qualified_name_registry/10_compilation.md` - Compilation pass
+- `tasks/qualified_name_registry/namespace_tree_design.md` - Comprehensive design reference

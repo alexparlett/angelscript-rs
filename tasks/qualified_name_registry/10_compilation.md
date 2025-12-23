@@ -29,7 +29,7 @@ pub struct CompilationPass<'reg, 'global> {
 
 ### Type Lookup by QualifiedName
 
-Where we previously had `TypeHash` lookups, we can now use `QualifiedName`:
+Where we previously had `TypeHash` lookups, we can now use `QualifiedName` and the namespace tree:
 
 ```rust
 impl<'reg, 'global> CompilationPass<'reg, 'global> {
@@ -50,18 +50,24 @@ impl<'reg, 'global> CompilationPass<'reg, 'global> {
     }
 
     /// Resolve a type name in current context.
+    ///
+    /// Uses the namespace tree which handles:
+    /// 1. Current namespace and walk up to root
+    /// 2. Using directive namespaces (via `Uses` edges, non-transitive)
     fn resolve_type_name(&self, name: &str) -> Option<QualifiedName> {
-        self.registry.resolve_type_name(
-            name,
-            &self.current_namespace,
-            &self.imports,
-        ).or_else(|| {
-            self.global_registry.resolve_type_name(
-                name,
-                &self.current_namespace,
-                &self.imports,
-            )
-        })
+        // Use namespace tree resolution
+        let ctx = ResolutionContext {
+            current_namespace: self.registry.tree().get_path(&self.current_namespace)?,
+        };
+
+        self.registry.tree().resolve_type_to_name(name, &ctx)
+            .or_else(|| {
+                // Fall back to global registry for FFI types
+                self.global_registry.resolve_type_name(
+                    name,
+                    &self.current_namespace,
+                )
+            })
     }
 }
 ```
@@ -176,18 +182,24 @@ impl<'ctx> TypeResolver<'ctx> {
 
 impl<'reg> CompilationContext<'reg> {
     /// Resolve a type name in the current namespace context.
+    ///
+    /// Uses the namespace tree which handles:
+    /// 1. Current namespace and walk up to root
+    /// 2. Using directive namespaces (via `Uses` edges, non-transitive)
     pub fn resolve_type_name(&self, name: &str) -> Option<QualifiedName> {
-        self.unit_registry.resolve_type_name(
-            name,
-            &self.current_namespace,
-            &self.imports,
-        ).or_else(|| {
-            self.global_registry.resolve_type_name(
-                name,
-                &self.current_namespace,
-                &self.imports,
-            )
-        })
+        // Use namespace tree resolution
+        let ctx = ResolutionContext {
+            current_namespace: self.unit_registry.tree().get_path(&self.current_namespace)?,
+        };
+
+        self.unit_registry.tree().resolve_type_to_name(name, &ctx)
+            .or_else(|| {
+                // Fall back to global registry for FFI types
+                self.global_registry.resolve_type_name(
+                    name,
+                    &self.current_namespace,
+                )
+            })
     }
 
     /// Get a type by qualified name.
@@ -385,21 +397,24 @@ mod tests {
 
 ## Migration Checklist
 
-1. [ ] Update `CompilationPass` to use name-based lookup
-2. [ ] Update `CompilationContext` with new lookup methods
-3. [ ] Update `TypeResolver` to work with resolved registry
+1. [ ] Update `CompilationPass` to use namespace tree for resolution
+2. [ ] Update `CompilationContext` to use `ResolutionContext` for tree lookups
+3. [ ] Update `TypeResolver` to work with namespace tree
 4. [ ] Remove any direct `TypeHash` computation during compilation
-5. [ ] Update tests to use new 3-pass flow
-6. [ ] Verify all existing tests still pass
+5. [ ] Remove `imports` field from `CompilationContext` (using directives are tree edges)
+6. [ ] Update tests to use new 3-pass flow
+7. [ ] Verify all existing tests still pass
 
 ---
 
 ## Summary
 
 The compilation pass changes are minimal:
-- Use `QualifiedName` for type lookup
+- Use `QualifiedName` for type lookup via namespace tree
+- Namespace tree handles `using namespace` resolution via `Uses` edges (non-transitive)
 - Get `TypeHash` from entry (already computed)
 - `TypeResolver` only used for expression types, not signatures
 - Registry is read-only after completion
+- No `imports` field needed - using directives are graph edges
 
 This completes the QualifiedName-Based Registry Architecture.

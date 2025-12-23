@@ -24,7 +24,7 @@ The root cause: We compute `TypeHash` during registration, which requires type l
 
 Follow the C++ AngelScript approach with a **clean separation** between passes:
 
-1. **Pass 1 (Registration)** returns `RegistrationResult` - pure data, no registry mutation
+1. **Pass 1 (Registration)** builds namespace tree, returns `RegistrationResult` - collects unresolved entries
 2. **Pass 2 (Completion)** transforms `RegistrationResult` into resolved entries, populates registry
 3. **Pass 3 (Compilation)** uses fully-resolved registry for bytecode generation
 
@@ -41,20 +41,22 @@ Key insight: **The registry only ever contains resolved types.** Unresolved data
 │                                                                         │
 │  PASS 1: REGISTRATION (Single AST Walk)                                 │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ Input:  AST                                                     │   │
+│  │ Input:  AST + NamespaceTree (mutable)                           │   │
 │  │ Output: RegistrationResult (Vec<UnresolvedClass>, etc.)         │   │
 │  │                                                                 │   │
+│  │ - Build namespace tree structure via get_or_create_path         │   │
 │  │ - Collect type declarations as UnresolvedClass, etc.            │   │
-│  │ - Store inheritance/signatures as UnresolvedType                │   │
-│  │ - NO type lookups, NO TypeHash computation, NO registry access  │   │
+│  │ - Collect using directives as UnresolvedUsingDirective          │   │
+│  │ - NO type lookups, NO TypeHash computation                      │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                              │                                          │
 │                              v                                          │
 │  PASS 2: COMPLETION (No AST)                                            │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ Input:  RegistrationResult + Global Registry (for FFI types)    │   │
+│  │ Input:  RegistrationResult + NamespaceTree + Global Registry    │   │
 │  │ Output: Populated SymbolRegistry                                │   │
 │  │                                                                 │   │
+│  │ Phase 0: Resolve using directives to graph edges                │   │
 │  │ Phase 1: Build name index (QualifiedName → UnresolvedEntry)     │   │
 │  │ Phase 2: Resolve all UnresolvedType → QualifiedName             │   │
 │  │ Phase 3: Transform Unresolved* → resolved entries               │   │
@@ -97,12 +99,14 @@ Each phase has detailed design in the `qualified_name_registry/` subfolder.
 
 - Add `UnresolvedClass`, `UnresolvedInterface`, `UnresolvedFuncdef`
 - Add `UnresolvedFunction`, `UnresolvedGlobal`, `UnresolvedEnum`
+- Add `UnresolvedUsingDirective` for deferred using resolution
 - These are Pass 1 output types, distinct from resolved registry entries
 
 ### Phase 3: Registration Result (angelscript-compiler)
 **Design:** [03_registration_result.md](qualified_name_registry/03_registration_result.md)
 
 - Add `RegistrationResult` struct containing all unresolved entries
+- Includes `using_directives: Vec<UnresolvedUsingDirective>`
 - Pass 1 returns this instead of mutating registry
 
 ### Phase 4: Registry Updates (angelscript-registry)
@@ -112,34 +116,58 @@ Each phase has detailed design in the `qualified_name_registry/` subfolder.
 - Add `hash_to_name` reverse index (built in completion)
 - Registry only stores resolved entries
 
-### Phase 4b: Namespace Tree Design
-**Design:** [04b_namespace_tree.md](qualified_name_registry/04b_namespace_tree.md)
+### Phase 5: NamespaceTree Implementation (angelscript-registry)
+**Design:** [05_namespace_tree.md](qualified_name_registry/05_namespace_tree.md)
 
-- Replace flat `HashMap<QualifiedName, TypeEntry>` with tree structure
-- Remove redundant `name`, `namespace`, `qualified_name` fields from all entry types
-- Tree-based type resolution for efficient `using` directive handling
-- This fundamentally changes how Phases 5/6/7 work
+- Implement `NamespaceTree` using `petgraph::DiGraph`
+- `NamespaceEdge::Contains(String)` for hierarchy
+- `NamespaceEdge::Uses` for using directive edges
+- Core navigation: `get_or_create_path`, `find_child`, `find_parent`
 
-### Phase 5: Registration Pass Rewrite (angelscript-compiler)
-**Design:** [05_registration.md](qualified_name_registry/05_registration.md)
+### Phase 6: NamespaceTree Storage and Resolution (angelscript-registry)
+**Design:** [06_namespace_tree_storage.md](qualified_name_registry/06_namespace_tree_storage.md)
 
-- Remove all `TypeResolver` usage
-- Remove all registry mutations
-- Return `RegistrationResult` with unresolved entries
+- Type/function/global registration in tree nodes
+- `ResolutionContext` for namespace-aware lookups
+- Resolution algorithm: current → ancestors → using edges (non-transitive)
+- Hash indexes for bytecode dispatch
 
-### Phase 6: Completion Pass Rewrite (angelscript-compiler)
-**Design:** [06_completion.md](qualified_name_registry/06_completion.md)
+### Phase 7: SymbolRegistry Integration (angelscript-registry)
+**Design:** [07_symbol_registry_integration.md](qualified_name_registry/07_symbol_registry_integration.md)
 
+- Integrate `NamespaceTree` into `SymbolRegistry`
+- `::Name` syntax for explicit global scope
+- Remove redundant name fields from entry types
+- Iterators over types/functions
+
+### Phase 8: Registration Pass Rewrite (angelscript-compiler)
+**Design:** [08_registration.md](qualified_name_registry/08_registration.md)
+
+- Takes mutable `NamespaceTree` reference
+- Builds tree nodes on `namespace` declarations
+- Collects `UnresolvedUsingDirective` (target may not exist yet)
+- Returns `RegistrationResult` with unresolved entries
+
+### Phase 9: Completion Pass Rewrite (angelscript-compiler)
+**Design:** [09_completion.md](qualified_name_registry/09_completion.md)
+
+- Phase 0: Resolve using directives to `Uses` edges
 - Take `RegistrationResult` as input
 - Transform unresolved entries → resolved entries
-- Populate registry
-- Build inheritance, vtables, hash indexes
+- Populate registry, build inheritance, vtables, hash indexes
 
-### Phase 7: Compilation Pass Updates (angelscript-compiler)
-**Design:** [07_compilation.md](qualified_name_registry/07_compilation.md)
+### Phase 10: Compilation Pass Updates (angelscript-compiler)
+**Design:** [10_compilation.md](qualified_name_registry/10_compilation.md)
 
 - Use fully-resolved registry
+- Use `ResolutionContext` for type lookups
 - No changes to core logic, just use new lookup APIs
+
+### Design Reference
+**Design:** [namespace_tree_design.md](qualified_name_registry/namespace_tree_design.md)
+
+- Comprehensive design document for namespace tree architecture
+- Covers all parts: structure, edges, resolution, storage, integration
 
 ---
 
@@ -153,42 +181,46 @@ Each phase has detailed design in the `qualified_name_registry/` subfolder.
 | Forward refs natural | Just store names as strings, resolve later |
 | C++ alignment | Matches AngelScript C++ approach |
 | Clean separation | Registration collects, Completion resolves |
-| Easier testing | Pass 1 is pure function, easy to unit test |
+| Easier testing | Pass 1 is pure function (except tree building) |
+| Using directives | Graph edges, not per-type context |
 
 ---
 
 ## Data Flow
 
 ```
-AST
+AST + NamespaceTree
  │
  ▼
 ┌──────────────────────────────────────┐
 │ Pass 1: Registration                 │
-│ (Pure function - no side effects)    │
+│ (Builds tree, collects unresolved)   │
 └──────────────────────────────────────┘
  │
  ▼
-RegistrationResult {
+ RegistrationResult {
     classes: Vec<UnresolvedClass>,
     interfaces: Vec<UnresolvedInterface>,
     funcdefs: Vec<UnresolvedFuncdef>,
     functions: Vec<UnresolvedFunction>,
     globals: Vec<UnresolvedGlobal>,
     enums: Vec<UnresolvedEnum>,
+    using_directives: Vec<UnresolvedUsingDirective>,
 }
  │
  ▼
 ┌──────────────────────────────────────┐
 │ Pass 2: Completion                   │
-│ (Transforms + populates registry)    │
+│ (Resolves using → transforms types)  │
 └──────────────────────────────────────┘
  │
  ▼
-SymbolRegistry {
-    types: HashMap<QualifiedName, TypeEntry>,     // All resolved
-    functions: HashMap<QualifiedName, Vec<FunctionEntry>>,
-    hash_to_name: HashMap<TypeHash, QualifiedName>,
+ SymbolRegistry {
+    tree: NamespaceTree {
+        graph: DiGraph<NamespaceData, NamespaceEdge>,
+        root: NodeIndex,
+        type_hash_index: HashMap<TypeHash, (NodeIndex, String)>,
+    }
 }
  │
  ▼
@@ -232,9 +264,41 @@ namespace Game {
         void interact(Entities::Player@ p);
     }
 }
-namespace Game::Entities {
-    class Player : Game::IEntity {
-        void interact(Player@ p) {}
+namespace Game {
+    namespace Entities {
+        class Player : Game::IEntity {
+            void interact(Player@ p) {}
+        }
+    }
+}
+
+// Test 6: Using namespace resolution
+namespace Utils {
+    class Helper {}
+}
+namespace Game {
+    using Utils;
+    class Player {
+        Helper@ helper;  // Resolves via using directive
+    }
+}
+
+// Test 7: Non-transitive using
+namespace C { class CType {} }
+namespace B { using C; }
+namespace A {
+    using B;
+    class AType {
+        CType@ c;  // ERROR: CType not visible (non-transitive)
+    }
+}
+
+// Test 8: Explicit global scope
+int var = 1;
+namespace Parent {
+    int var = 2;
+    void foo() {
+        Parent::var = ::var;  // ::var refers to global
     }
 }
 ```
@@ -248,9 +312,9 @@ namespace Game::Entities {
 | angelscript-core | `qualified_name.rs` (new) | New struct |
 | angelscript-core | `unresolved.rs` (new) | Unresolved types |
 | angelscript-core | `unresolved_entries.rs` (new) | Unresolved entry types |
-| angelscript-core | `entries/*.rs` | Minor updates for QualifiedName |
-| angelscript-registry | `registry.rs` | Add QualifiedName lookup |
+| angelscript-core | `entries/*.rs` | Remove redundant name fields |
+| angelscript-registry | `namespace_tree.rs` (new) | Tree structure with petgraph |
+| angelscript-registry | `registry.rs` | Integrate NamespaceTree |
 | angelscript-compiler | `passes/registration.rs` | Complete rewrite |
 | angelscript-compiler | `passes/completion.rs` | Complete rewrite |
 | angelscript-compiler | `passes/mod.rs` | Add RegistrationResult |
-| angelscript-compiler | `type_resolver.rs` | Move to completion only |

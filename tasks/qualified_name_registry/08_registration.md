@@ -2,7 +2,12 @@
 
 ## Overview
 
-Rewrite the Registration pass to be a **pure function** that takes an AST and returns `RegistrationResult`. No registry access, no type resolution, no TypeHash computation.
+Rewrite the Registration pass to:
+1. Build the namespace tree structure (nodes only, no types)
+2. Collect all unresolved declarations into `RegistrationResult`
+3. Collect `using namespace` directives for later edge creation
+
+No type resolution, no TypeHash computation.
 
 **Files:**
 - `crates/angelscript-compiler/src/passes/registration.rs` (rewrite)
@@ -11,11 +16,12 @@ Rewrite the Registration pass to be a **pure function** that takes an AST and re
 
 ## Design Principles
 
-1. **Pure function** - No side effects, no mutable references to external state
+1. **Build namespace tree** - Create namespace nodes as we walk the AST
 2. **No type resolution** - Store type names as strings, resolve in completion
-3. **No registry access** - Don't look up or register anything
-4. **Capture context** - Store namespace/imports for later resolution
+3. **No type registration** - Don't register types, just collect them
+4. **Capture context** - Store namespace context for later resolution
 5. **Collect everything** - All declarations go into the result
+6. **Collect using directives** - Store `using namespace` directives for edge creation in completion
 
 ---
 
@@ -28,36 +34,41 @@ use angelscript_core::{
     CompilationError, QualifiedName, Span, UnitId, Visibility,
     UnresolvedClass, UnresolvedEnum, UnresolvedEnumValue, UnresolvedField,
     UnresolvedFuncdef, UnresolvedFunction, UnresolvedGlobal, UnresolvedInheritance,
-    UnresolvedInterface, UnresolvedMethod, UnresolvedMixin, UnresolvedParam,
-    UnresolvedSignature, UnresolvedType, UnresolvedVirtualProperty,
-    MethodKind,
+    UnresolvedInterface, UnresolvedMethod, UnresolvedMixin,
+    UnresolvedParam, UnresolvedSignature, UnresolvedType, UnresolvedUsingDirective,
+    UnresolvedVirtualProperty, MethodKind,
 };
 use angelscript_parser::ast::*;
+use angelscript_registry::NamespaceTree;
 
 use crate::passes::RegistrationResult;
 
-/// Pass 1: Collect all type and function declarations from the AST.
+/// Pass 1: Build namespace tree and collect all declarations from the AST.
 ///
-/// This is a pure function - it does not access the registry or resolve types.
-/// Output is `RegistrationResult` containing all unresolved declarations.
-pub struct RegistrationPass {
+/// This pass:
+/// 1. Builds the namespace tree structure (nodes only, no types yet)
+/// 2. Collects all unresolved declarations into RegistrationResult
+/// 3. Collects using directives for later edge creation
+///
+/// No type resolution happens here - types are resolved in the Completion pass.
+pub struct RegistrationPass<'tree> {
     /// Unit ID for source tracking.
     unit_id: UnitId,
     /// Current namespace stack.
     namespace_stack: Vec<String>,
-    /// Active imports (using namespace directives).
-    imports: Vec<String>,
+    /// The namespace tree to build.
+    tree: &'tree mut NamespaceTree,
     /// Result being built.
     result: RegistrationResult,
 }
 
-impl RegistrationPass {
+impl<'tree> RegistrationPass<'tree> {
     /// Create a new registration pass for a unit.
-    pub fn new(unit_id: UnitId) -> Self {
+    pub fn new(unit_id: UnitId, tree: &'tree mut NamespaceTree) -> Self {
         Self {
             unit_id,
             namespace_stack: Vec::new(),
-            imports: Vec::new(),
+            tree,
             result: RegistrationResult::new(unit_id),
         }
     }
@@ -65,6 +76,7 @@ impl RegistrationPass {
     /// Run the registration pass on a script.
     ///
     /// Returns `RegistrationResult` containing all unresolved declarations.
+    /// The namespace tree is built as a side effect.
     pub fn run(mut self, script: &Script<'_>) -> RegistrationResult {
         for item in script.items() {
             self.visit_item(item);
@@ -86,9 +98,7 @@ impl RegistrationPass {
         QualifiedName::new(simple_name, self.current_namespace())
     }
 
-    fn current_imports(&self) -> Vec<String> {
-        self.imports.clone()
-    }
+    // NOTE: No current_imports() - using directives collected in result
 
     fn enter_namespace(&mut self, ns: &str) {
         for part in ns.split("::") {
@@ -128,20 +138,34 @@ impl RegistrationPass {
     }
 
     fn visit_namespace(&mut self, ns: &NamespaceDecl<'_>) {
-        let ns_path: String = ns.path.iter().map(|id| id.name).collect::<Vec<_>>().join("::");
+        // Namespace declaration is a single identifier (not a path)
+        let ns_name = ns.name.name;
 
-        self.enter_namespace(&ns_path);
+        self.enter_namespace(ns_name);
+
+        // Build the namespace node in the tree
+        self.tree.get_or_create_path(&self.current_namespace());
 
         for item in ns.items {
             self.visit_item(item);
         }
 
-        self.exit_namespace(&ns_path);
+        self.exit_namespace(ns_name);
     }
 
     fn visit_using(&mut self, u: &UsingNamespaceDecl<'_>) {
-        let ns: String = u.path.iter().map(|id| id.name).collect::<Vec<_>>().join("::");
-        self.imports.push(ns);
+        // Collect using directive for later resolution in Completion pass
+        let target: Vec<String> = u.path.iter()
+            .map(|id| id.name.to_string())
+            .collect();
+
+        let directive = UnresolvedUsingDirective::new(
+            self.current_namespace(),  // Source namespace where directive appears
+            target,                     // Target namespace path
+            u.span,
+        );
+
+        self.result.add_using_directive(directive);
     }
 }
 ```
@@ -500,10 +524,13 @@ impl RegistrationPass {
 ```rust
 impl RegistrationPass {
     /// Collect a type expression without resolving it.
+    ///
+    /// NOTE: Only stores context_namespace, NOT imports. Using directives are
+    /// resolved via namespace tree edges in the Completion pass.
     fn collect_type_expr(&self, ty: &TypeExpr<'_>) -> UnresolvedType {
         let name = self.type_to_string(&ty.ty);
 
-        UnresolvedType::with_context(name, self.current_namespace(), self.current_imports())
+        UnresolvedType::with_context(name, self.current_namespace())
             .with_const(ty.is_const)
             .with_handle(ty.is_handle)
             .with_handle_to_const(ty.is_handle_to_const)
@@ -513,7 +540,7 @@ impl RegistrationPass {
     /// Convert an IdentExpr (used for inheritance) to UnresolvedType.
     fn collect_ident_expr_type(&self, expr: &IdentExpr<'_>) -> UnresolvedType {
         let name = self.ident_expr_to_string(expr);
-        UnresolvedType::with_context(name, self.current_namespace(), self.current_imports())
+        UnresolvedType::with_context(name, self.current_namespace())
     }
 
     /// Collect function signature.
@@ -714,6 +741,9 @@ mod tests {
 2. **Registry access** - No lookups or registrations
 3. **TypeHash computation** - Deferred to completion
 4. **PendingResolutions** - Not needed, info in entries
+5. **`imports` field** - Using directives collected in `RegistrationResult.using_directives`
+6. **`current_imports()` helper** - No longer needed
+7. **Per-type imports** - `UnresolvedType` no longer has `imports` field
 
 ---
 
