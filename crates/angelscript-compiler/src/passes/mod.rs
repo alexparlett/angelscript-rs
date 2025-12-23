@@ -43,6 +43,7 @@
 pub mod compilation;
 pub mod completion;
 pub mod registration;
+pub mod registration_result;
 
 use angelscript_core::{Span, TypeHash};
 use rustc_hash::FxHashMap;
@@ -50,6 +51,7 @@ use rustc_hash::FxHashMap;
 pub use compilation::{CompilationOutput, CompilationPass, CompiledFunctionEntry, GlobalInitEntry};
 pub use completion::{CompletionOutput, TypeCompletionPass};
 pub use registration::{RegistrationOutput, RegistrationPass};
+pub use registration_result::{RegistrationResult, RegistrationStats};
 
 // Re-export PendingResolutions for orchestration (pass output from Pass 1 to Pass 1b)
 
