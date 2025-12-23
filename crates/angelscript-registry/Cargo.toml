@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 angelscript-core = { path = "../angelscript-core" }
+petgraph = "0.6"
 thiserror.workspace = true
 rustc-hash.workspace = true

@@ -41,9 +41,11 @@
 //! ```
 
 mod module;
+mod namespace_tree;
 mod registry;
 
 pub use module::{HasClassMeta, HasFunctionMeta, IntoFunctionMeta, Module};
+pub use namespace_tree::{NamespaceData, NamespaceEdge, NamespaceTree};
 pub use registry::SymbolRegistry;
 
 // Re-export from core for backwards compatibility during transition
