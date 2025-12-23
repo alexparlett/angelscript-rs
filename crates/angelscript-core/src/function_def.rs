@@ -32,7 +32,7 @@ use std::cell::OnceCell;
 use std::fmt;
 
 use crate::type_def::Visibility;
-use crate::{DataType, TypeHash};
+use crate::{DataType, QualifiedName, TypeHash};
 
 /// Function parameter with name, type, and optional default value marker.
 ///
@@ -236,8 +236,8 @@ pub struct FunctionDef {
     pub template_params: Vec<TypeHash>,
     /// True if this function accepts variadic arguments.
     pub is_variadic: bool,
-    /// Cached qualified name (computed on first access).
-    cached_qualified_name: OnceCell<String>,
+    /// Cached QualifiedName (computed on first access).
+    cached_qname: OnceCell<QualifiedName>,
 }
 
 impl PartialEq for FunctionDef {
@@ -283,7 +283,7 @@ impl FunctionDef {
             visibility,
             template_params: Vec::new(),
             is_variadic: false,
-            cached_qualified_name: OnceCell::new(),
+            cached_qname: OnceCell::new(),
         }
     }
 
@@ -313,11 +313,11 @@ impl FunctionDef {
             visibility,
             template_params,
             is_variadic: false,
-            cached_qualified_name: OnceCell::new(),
+            cached_qname: OnceCell::new(),
         }
     }
 
-    /// Get the qualified name of this function.
+    /// Get the structured qualified name.
     ///
     /// The result is cached on first access to avoid repeated allocations.
     ///
@@ -337,16 +337,11 @@ impl FunctionDef {
     ///     false,
     ///     Visibility::Public,
     /// );
-    /// assert_eq!(func.qualified_name(), "Game::Player::update");
+    /// assert_eq!(func.qname().to_string(), "Game::Player::update");
     /// ```
-    pub fn qualified_name(&self) -> &str {
-        self.cached_qualified_name.get_or_init(|| {
-            if self.namespace.is_empty() {
-                self.name.clone()
-            } else {
-                format!("{}::{}", self.namespace.join("::"), self.name)
-            }
-        })
+    pub fn qname(&self) -> &QualifiedName {
+        self.cached_qname
+            .get_or_init(|| QualifiedName::new(self.name.clone(), self.namespace.clone()))
     }
 
     /// Check if this function is a method (belongs to an object type).
@@ -580,7 +575,7 @@ mod tests {
             false,
             Visibility::Public,
         );
-        assert_eq!(func.qualified_name(), "Game::update");
+        assert_eq!(func.qname().to_string(), "Game::update");
     }
 
     #[test]

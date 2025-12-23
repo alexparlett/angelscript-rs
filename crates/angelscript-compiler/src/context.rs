@@ -299,18 +299,20 @@ impl<'a> CompilationContext<'a> {
 
                 // Check unit registry
                 if let Some(funcs) = self.unit_registry.get_namespace_functions(ns)
-                    && let Some(hashes) = funcs.get(simple)
+                    && let Some(qname) = funcs.get(simple)
+                    && let Some(entries) = self.unit_registry.get_functions(qname)
                 {
-                    results.extend(hashes.iter().copied());
+                    results.extend(entries.iter().map(|e| e.def.func_hash));
                 }
 
                 // Check global registry
                 if let Some(funcs) = self.global_registry.get_namespace_functions(ns)
-                    && let Some(hashes) = funcs.get(simple)
+                    && let Some(qname) = funcs.get(simple)
+                    && let Some(entries) = self.global_registry.get_functions(qname)
                 {
-                    for &hash in hashes {
-                        if !results.contains(&hash) {
-                            results.push(hash);
+                    for entry in entries {
+                        if !results.contains(&entry.def.func_hash) {
+                            results.push(entry.def.func_hash);
                         }
                     }
                 }
@@ -330,22 +332,24 @@ impl<'a> CompilationContext<'a> {
             let mut found = false;
             // Check unit registry
             if let Some(funcs) = self.unit_registry.get_namespace_functions(ns)
-                && let Some(hashes) = funcs.get(name)
+                && let Some(qname) = funcs.get(name)
+                && let Some(entries) = self.unit_registry.get_functions(qname)
             {
-                for &hash in hashes {
-                    if !results.contains(&hash) {
-                        results.push(hash);
+                for entry in entries {
+                    if !results.contains(&entry.def.func_hash) {
+                        results.push(entry.def.func_hash);
                         found = true;
                     }
                 }
             }
             // Check global registry
             if let Some(funcs) = self.global_registry.get_namespace_functions(ns)
-                && let Some(hashes) = funcs.get(name)
+                && let Some(qname) = funcs.get(name)
+                && let Some(entries) = self.global_registry.get_functions(qname)
             {
-                for &hash in hashes {
-                    if !results.contains(&hash) {
-                        results.push(hash);
+                for entry in entries {
+                    if !results.contains(&entry.def.func_hash) {
+                        results.push(entry.def.func_hash);
                         found = true;
                     }
                 }

@@ -9,8 +9,8 @@ use thiserror::Error;
 use angelscript_core::{
     ClassEntry, ClassMeta, DataType, FuncdefEntry, FuncdefMeta, FunctionDef, FunctionEntry,
     FunctionMeta, FunctionTraits, InterfaceEntry, InterfaceMeta, MethodSignature, Operator,
-    OperatorBehavior, Param, PropertyEntry, StringFactory, TemplateParamEntry, TypeHash,
-    TypeSource, Visibility,
+    OperatorBehavior, Param, PropertyEntry, QualifiedName, StringFactory, TemplateParamEntry,
+    TypeHash, TypeSource, Visibility,
 };
 use angelscript_registry::{Module, SymbolRegistry};
 
@@ -646,10 +646,16 @@ impl Context {
         let return_type = DataType::simple(meta.return_type);
 
         let entry = if let Some(parent_hash) = meta.parent_type {
+            // Get parent type's QualifiedName for proper namespace handling
+            let parent_qname = self
+                .registry
+                .get(parent_hash)
+                .map(|e| e.qname().clone())
+                .unwrap_or_else(|| QualifiedName::global(format!("{:?}", parent_hash)));
+
             FuncdefEntry::new_child(
                 meta.name,
-                namespace.to_vec(),
-                &qualified_name,
+                &parent_qname,
                 meta.type_hash,
                 TypeSource::ffi_untyped(),
                 params,

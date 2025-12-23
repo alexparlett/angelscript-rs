@@ -5,7 +5,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::{DataType, TypeBehaviors, TypeHash, TypeKind};
+use crate::{DataType, QualifiedName, TypeBehaviors, TypeHash, TypeKind};
 
 use super::{PropertyEntry, TypeSource};
 
@@ -100,6 +100,8 @@ impl VTable {
 /// and template instances (like `array<int>`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassEntry {
+    /// Structured qualified name for name-based lookup.
+    pub qname: QualifiedName,
     /// Unqualified name.
     pub name: String,
     /// Namespace path (e.g., `["Game", "Entities"]`).
@@ -166,10 +168,42 @@ impl ClassEntry {
         type_kind: TypeKind,
         source: TypeSource,
     ) -> Self {
+        let name = name.into();
+        let qualified_name = qualified_name.into();
+        let qname = QualifiedName::new(name.clone(), namespace.clone());
         Self {
-            name: name.into(),
+            qname,
+            name,
             namespace,
-            qualified_name: qualified_name.into(),
+            qualified_name,
+            type_hash,
+            type_kind,
+            source,
+            base_class: None,
+            mixins: Vec::new(),
+            interfaces: Vec::new(),
+            behaviors: TypeBehaviors::default(),
+            methods: FxHashMap::default(),
+            properties: Vec::new(),
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+            is_final: false,
+            is_abstract: false,
+            is_mixin: false,
+            vtable: VTable::default(),
+            itables: ITableMap::default(),
+        }
+    }
+
+    /// Create a class entry from a QualifiedName.
+    pub fn with_qname(qname: QualifiedName, type_kind: TypeKind, source: TypeSource) -> Self {
+        let type_hash = qname.to_type_hash();
+        Self {
+            name: qname.simple_name().to_string(),
+            namespace: qname.namespace_path().to_vec(),
+            qualified_name: qname.to_string(),
+            qname,
             type_hash,
             type_kind,
             source,
@@ -194,14 +228,30 @@ impl ClassEntry {
     pub fn ffi(name: impl Into<String>, type_kind: TypeKind) -> Self {
         let name = name.into();
         let type_hash = TypeHash::from_name(&name);
-        Self::new(
-            name.clone(),
-            Vec::new(),
-            name,
+        let qname = QualifiedName::global(name.clone());
+        Self {
+            qname,
+            name: name.clone(),
+            namespace: Vec::new(),
+            qualified_name: name,
             type_hash,
             type_kind,
-            TypeSource::ffi_untyped(),
-        )
+            source: TypeSource::ffi_untyped(),
+            base_class: None,
+            mixins: Vec::new(),
+            interfaces: Vec::new(),
+            behaviors: TypeBehaviors::default(),
+            methods: FxHashMap::default(),
+            properties: Vec::new(),
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+            is_final: false,
+            is_abstract: false,
+            is_mixin: false,
+            vtable: VTable::default(),
+            itables: ITableMap::default(),
+        }
     }
 
     /// Create a script class entry.
@@ -214,14 +264,35 @@ impl ClassEntry {
         let name = name.into();
         let qualified_name = qualified_name.into();
         let type_hash = TypeHash::from_name(&qualified_name);
-        Self::new(
+        let qname = QualifiedName::new(name.clone(), namespace.clone());
+        Self {
+            qname,
             name,
             namespace,
             qualified_name,
             type_hash,
-            TypeKind::ScriptObject,
+            type_kind: TypeKind::ScriptObject,
             source,
-        )
+            base_class: None,
+            mixins: Vec::new(),
+            interfaces: Vec::new(),
+            behaviors: TypeBehaviors::default(),
+            methods: FxHashMap::default(),
+            properties: Vec::new(),
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+            is_final: false,
+            is_abstract: false,
+            is_mixin: false,
+            vtable: VTable::default(),
+            itables: ITableMap::default(),
+        }
+    }
+
+    /// Get the structured qualified name.
+    pub fn qname(&self) -> &QualifiedName {
+        &self.qname
     }
 
     // === Builder Methods ===

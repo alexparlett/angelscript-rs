@@ -2,133 +2,146 @@
 
 ## Overview
 
-Update `SymbolRegistry` to support `QualifiedName`-based lookup alongside `TypeHash`. The registry only stores resolved entries - unresolved data never enters the registry.
+Update `SymbolRegistry` to use `QualifiedName` as the **primary key** for type storage. The `types: FxHashMap<TypeHash, TypeEntry>` map is **removed** - TypeHash is accessed directly from each entry when needed.
+
+**Key Insight:** TypeHash is already stored on each entry (`ClassEntry.type_hash`, `FunctionDef.func_hash`, etc.), so storing entries again by hash is redundant. The VM will use `FxHashMap<TypeHash, CompiledFunction>` in the bytecode module for O(1) function dispatch at runtime - that's the appropriate place for hash-based lookup.
 
 **Files:**
-- `crates/angelscript-registry/src/registry.rs` (update)
-- `crates/angelscript-core/src/entries/*.rs` (minor updates)
+- `crates/angelscript-registry/src/registry.rs` (major update)
+- `crates/angelscript-core/src/entries/*.rs` (add QualifiedName field)
 
 ---
 
 ## Key Changes
 
-### 1. Add QualifiedName to Entries
+### 1. Remove Hash-Based Type Storage
 
-Each entry type gets a `qualified_name` field:
+The `types: FxHashMap<TypeHash, TypeEntry>` map is removed. Instead:
+- Types are stored by `QualifiedName` as primary key
+- TypeHash is accessed from the entry itself when needed
+- A reverse index `hash_to_name` provides hash-based lookup when required
+
+### 2. Add QualifiedName to Entries
+
+Each entry type gets a `qname` field (using short name to avoid conflict with existing `qualified_name: String`):
 
 ```rust
 // In ClassEntry, InterfaceEntry, FuncdefEntry, EnumEntry
 
 pub struct ClassEntry {
-    /// Qualified name for name-based lookup.
-    pub qualified_name: QualifiedName,
+    /// Structured qualified name for name-based lookup.
+    pub qname: QualifiedName,
 
-    // Existing fields unchanged
+    // Existing fields unchanged (will be deprecated later)
     pub name: String,
     pub namespace: Vec<String>,
+    pub qualified_name: String,
+    pub type_hash: TypeHash,  // Hash accessed from here, not from map key
     // ... etc
 }
 ```
 
-Note: We keep the existing `name`, `namespace`, and `qualified_name: String` fields for backwards compatibility during migration. These can be removed later.
-
-### 2. Add QualifiedName Index to Registry
+### 3. New Registry Structure
 
 ```rust
 // crates/angelscript-registry/src/registry.rs
 
 use angelscript_core::QualifiedName;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub struct SymbolRegistry {
-    // === Existing storage (by TypeHash) ===
-    types: FxHashMap<TypeHash, TypeEntry>,
+    // === PRIMARY: Name-based storage ===
+
+    /// Types stored by qualified name (PRIMARY storage).
+    types: FxHashMap<QualifiedName, TypeEntry>,
+
+    /// Functions stored by hash (hash encodes signature for overload uniqueness).
     functions: FxHashMap<TypeHash, FunctionEntry>,
+
+    /// Global properties by hash.
     globals: FxHashMap<TypeHash, GlobalPropertyEntry>,
 
-    // === NEW: Name-based indexes ===
+    // === SECONDARY: Indexes for lookup ===
 
-    /// Type lookup by qualified name.
-    /// Populated during completion pass.
-    types_by_name: FxHashMap<QualifiedName, TypeHash>,
+    /// Reverse index: hash -> name (for hash-based lookups).
+    /// Built during registration.
+    type_hash_to_name: FxHashMap<TypeHash, QualifiedName>,
 
     /// Function lookup by qualified name (name -> list of overload hashes).
-    /// Populated during completion pass.
     functions_by_name: FxHashMap<QualifiedName, Vec<TypeHash>>,
 
     /// Global lookup by qualified name.
     globals_by_name: FxHashMap<QualifiedName, TypeHash>,
 
-    // === NEW: Namespace indexes ===
+    // === Namespace indexes (existing, kept for scope building) ===
 
-    /// Types in each namespace: namespace_string -> simple_name -> TypeHash.
-    types_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
+    /// Types in each namespace: namespace_string -> simple_name -> QualifiedName.
+    types_by_namespace: FxHashMap<String, FxHashMap<String, QualifiedName>>,
 
     /// Functions in each namespace.
     functions_by_namespace: FxHashMap<String, FxHashMap<String, Vec<TypeHash>>>,
 
+    /// Globals in each namespace.
+    globals_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
+
     /// Registered namespaces.
     namespaces: FxHashSet<String>,
+
+    // === Type aliases (existing) ===
+    type_aliases: FxHashMap<String, TypeHash>,
+    type_aliases_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
 }
 ```
 
 ---
 
-## New Registration Methods
+## Registration Methods
 
 ```rust
 impl SymbolRegistry {
-    /// Register a type with both hash and name indexing.
-    pub fn register_type_with_name(
-        &mut self,
-        entry: TypeEntry,
-        name: QualifiedName,
-    ) -> Result<(), RegistrationError> {
+    /// Register a type by qualified name (primary method).
+    pub fn register_type(&mut self, entry: TypeEntry) -> Result<(), RegistrationError> {
+        let name = entry.qname().clone();
         let hash = entry.type_hash();
 
         // Check for duplicate by name
-        if self.types_by_name.contains_key(&name) {
+        if self.types.contains_key(&name) {
             return Err(RegistrationError::DuplicateType(name.to_string()));
         }
 
-        // Check for duplicate by hash (shouldn't happen if names are unique)
-        if self.types.contains_key(&hash) {
-            return Err(RegistrationError::DuplicateType(name.to_string()));
-        }
-
-        // Add to name index
-        self.types_by_name.insert(name.clone(), hash);
+        // Build reverse index
+        self.type_hash_to_name.insert(hash, name.clone());
 
         // Add to namespace index
-        let ns_key = name.namespace_string();
-        self.types_by_namespace
-            .entry(ns_key)
-            .or_default()
-            .insert(name.simple_name().to_string(), hash);
+        if !entry.is_template_param() {
+            let ns_key = name.namespace_string();
+            self.types_by_namespace
+                .entry(ns_key)
+                .or_default()
+                .insert(name.simple_name().to_string(), name.clone());
+        }
 
         // Register namespace
         if !name.is_global() {
             self.namespaces.insert(name.namespace_string());
         }
 
-        // Add to hash index
-        self.types.insert(hash, entry);
+        // Store by name (primary)
+        self.types.insert(name, entry);
 
         Ok(())
     }
 
-    /// Register a function with both hash and name indexing.
-    pub fn register_function_with_name(
-        &mut self,
-        entry: FunctionEntry,
-        name: QualifiedName,
-    ) -> Result<(), RegistrationError> {
-        let hash = entry.func_hash();
+    /// Register a function.
+    pub fn register_function(&mut self, entry: FunctionEntry) -> Result<(), RegistrationError> {
+        let hash = entry.def.func_hash;
+        let name = entry.def.qname().clone();
 
         // Check for duplicate by hash (same signature)
         if self.functions.contains_key(&hash) {
-            return Err(RegistrationError::DuplicateFunction {
+            return Err(RegistrationError::DuplicateRegistration {
                 name: name.to_string(),
+                kind: "function".to_string(),
             });
         }
 
@@ -139,7 +152,7 @@ impl SymbolRegistry {
             .push(hash);
 
         // Add to namespace index (global functions only)
-        if entry.is_global() {
+        if entry.def.object_type.is_none() {
             let ns_key = name.namespace_string();
             self.functions_by_namespace
                 .entry(ns_key)
@@ -149,22 +162,22 @@ impl SymbolRegistry {
                 .push(hash);
         }
 
-        // Add to hash index
+        // Store by hash (hash encodes signature uniqueness)
         self.functions.insert(hash, entry);
 
         Ok(())
     }
 
-    /// Register a global variable with both hash and name indexing.
-    pub fn register_global_with_name(
-        &mut self,
-        entry: GlobalPropertyEntry,
-        name: QualifiedName,
-    ) -> Result<(), RegistrationError> {
-        let hash = entry.hash();
+    /// Register a global property.
+    pub fn register_global(&mut self, entry: GlobalPropertyEntry) -> Result<(), RegistrationError> {
+        let hash = entry.type_hash;
+        let name = entry.qname().clone();
 
         if self.globals_by_name.contains_key(&name) {
-            return Err(RegistrationError::DuplicateGlobal(name.to_string()));
+            return Err(RegistrationError::DuplicateRegistration {
+                name: name.to_string(),
+                kind: "global property".to_string(),
+            });
         }
 
         self.globals_by_name.insert(name.clone(), hash);
@@ -184,30 +197,62 @@ impl SymbolRegistry {
 
 ---
 
-## New Lookup Methods
+## Lookup Methods
 
 ```rust
 impl SymbolRegistry {
-    // === Lookup by QualifiedName ===
+    // === Primary: Lookup by QualifiedName ===
 
     /// Get a type by qualified name.
-    pub fn get_type_by_name(&self, name: &QualifiedName) -> Option<&TypeEntry> {
-        self.types_by_name
-            .get(name)
-            .and_then(|hash| self.types.get(hash))
+    pub fn get_type(&self, name: &QualifiedName) -> Option<&TypeEntry> {
+        self.types.get(name)
     }
 
-    /// Get a type hash by qualified name.
-    pub fn get_type_hash(&self, name: &QualifiedName) -> Option<TypeHash> {
-        self.types_by_name.get(name).copied()
+    /// Get a mutable type by qualified name.
+    pub fn get_type_mut(&mut self, name: &QualifiedName) -> Option<&mut TypeEntry> {
+        self.types.get_mut(name)
     }
 
     /// Check if a type exists by name.
-    pub fn contains_type_name(&self, name: &QualifiedName) -> bool {
-        self.types_by_name.contains_key(name)
+    pub fn contains_type(&self, name: &QualifiedName) -> bool {
+        self.types.contains_key(name)
     }
 
-    /// Get all function overloads by qualified name.
+    /// Get a type's hash by qualified name.
+    pub fn get_type_hash(&self, name: &QualifiedName) -> Option<TypeHash> {
+        self.types.get(name).map(|e| e.type_hash())
+    }
+
+    // === Secondary: Lookup by TypeHash (via reverse index) ===
+
+    /// Get a type by hash (uses reverse index).
+    pub fn get_type_by_hash(&self, hash: TypeHash) -> Option<&TypeEntry> {
+        self.type_hash_to_name
+            .get(&hash)
+            .and_then(|name| self.types.get(name))
+    }
+
+    /// Get a mutable type by hash (uses reverse index).
+    pub fn get_type_by_hash_mut(&mut self, hash: TypeHash) -> Option<&mut TypeEntry> {
+        self.type_hash_to_name
+            .get(&hash)
+            .cloned()
+            .and_then(move |name| self.types.get_mut(&name))
+    }
+
+    /// Check if a type exists by hash.
+    pub fn contains_type_hash(&self, hash: TypeHash) -> bool {
+        self.type_hash_to_name.contains_key(&hash)
+    }
+
+    // === Function lookup (unchanged - still by hash) ===
+
+    /// Get a function by its hash.
+    pub fn get_function(&self, hash: TypeHash) -> Option<&FunctionEntry> {
+        self.functions.get(&hash)
+    }
+
+    /// Get all overloads for a function by qualified name.
     pub fn get_functions_by_name(&self, name: &QualifiedName) -> Vec<&FunctionEntry> {
         self.functions_by_name
             .get(name)
@@ -220,20 +265,33 @@ impl SymbolRegistry {
             .unwrap_or_default()
     }
 
+    // === Global lookup ===
+
     /// Get a global by qualified name.
-    pub fn get_global_by_name(&self, name: &QualifiedName) -> Option<&GlobalPropertyEntry> {
+    pub fn get_global(&self, name: &QualifiedName) -> Option<&GlobalPropertyEntry> {
         self.globals_by_name
             .get(name)
             .and_then(|hash| self.globals.get(hash))
     }
 
-    // === Name Resolution ===
+    /// Get a global by hash.
+    pub fn get_global_by_hash(&self, hash: TypeHash) -> Option<&GlobalPropertyEntry> {
+        self.globals.get(&hash)
+    }
+}
+```
 
+---
+
+## Name Resolution
+
+```rust
+impl SymbolRegistry {
     /// Resolve a type name in context.
     ///
     /// Tries the following in order:
     /// 1. Already qualified name (contains ::)
-    /// 2. Current namespace
+    /// 2. Current namespace (innermost to outermost)
     /// 3. Each import as prefix
     /// 4. Global namespace
     pub fn resolve_type_name(
@@ -245,7 +303,7 @@ impl SymbolRegistry {
         // 1. If already qualified, try direct lookup
         if name.contains("::") {
             let qn = QualifiedName::from_qualified_string(name);
-            if self.types_by_name.contains_key(&qn) {
+            if self.types.contains_key(&qn) {
                 return Some(qn);
             }
             return None;
@@ -255,7 +313,7 @@ impl SymbolRegistry {
         for i in (0..=current_namespace.len()).rev() {
             let ns = current_namespace[..i].to_vec();
             let qn = QualifiedName::new(name, ns);
-            if self.types_by_name.contains_key(&qn) {
+            if self.types.contains_key(&qn) {
                 return Some(qn);
             }
         }
@@ -264,12 +322,12 @@ impl SymbolRegistry {
         for import in imports {
             let ns: Vec<String> = import.split("::").map(|s| s.to_string()).collect();
             let qn = QualifiedName::new(name, ns);
-            if self.types_by_name.contains_key(&qn) {
+            if self.types.contains_key(&qn) {
                 return Some(qn);
             }
         }
 
-        // 4. Try global namespace (already tried in step 2 when i=0)
+        // 4. Global namespace already tried in step 2 when i=0
         None
     }
 
@@ -310,31 +368,6 @@ impl SymbolRegistry {
 
         None
     }
-
-    // === Namespace queries ===
-
-    /// Get all types in a namespace.
-    pub fn types_in_namespace(&self, namespace: &str) -> Vec<&TypeEntry> {
-        self.types_by_namespace
-            .get(namespace)
-            .map(|types| {
-                types
-                    .values()
-                    .filter_map(|hash| self.types.get(hash))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Get all registered namespaces.
-    pub fn namespaces(&self) -> impl Iterator<Item = &str> {
-        self.namespaces.iter().map(|s| s.as_str())
-    }
-
-    /// Check if a namespace exists.
-    pub fn has_namespace(&self, namespace: &str) -> bool {
-        self.namespaces.contains(namespace)
-    }
 }
 ```
 
@@ -344,26 +377,29 @@ impl SymbolRegistry {
 
 ```rust
 impl SymbolRegistry {
+    /// Iterate over all types.
+    pub fn types(&self) -> impl Iterator<Item = &TypeEntry> {
+        self.types.values()
+    }
+
     /// Iterate over all types with their qualified names.
     pub fn types_with_names(&self) -> impl Iterator<Item = (&QualifiedName, &TypeEntry)> {
-        self.types_by_name.iter().filter_map(|(name, hash)| {
-            self.types.get(hash).map(|entry| (name, entry))
-        })
+        self.types.iter()
+    }
+
+    /// Iterate over all class entries.
+    pub fn classes(&self) -> impl Iterator<Item = &ClassEntry> {
+        self.types.values().filter_map(|t| t.as_class())
     }
 
     /// Iterate over all class entries with names.
     pub fn classes_with_names(&self) -> impl Iterator<Item = (&QualifiedName, &ClassEntry)> {
-        self.types_with_names().filter_map(|(name, entry)| {
+        self.types.iter().filter_map(|(name, entry)| {
             entry.as_class().map(|class| (name, class))
         })
     }
 
-    /// Iterate over all interface entries with names.
-    pub fn interfaces_with_names(&self) -> impl Iterator<Item = (&QualifiedName, &InterfaceEntry)> {
-        self.types_with_names().filter_map(|(name, entry)| {
-            entry.as_interface().map(|iface| (name, iface))
-        })
-    }
+    // ... similar for interfaces, enums, funcdefs
 }
 ```
 
@@ -371,7 +407,7 @@ impl SymbolRegistry {
 
 ## Entry Type Updates
 
-Add `qualified_name` field to entry types:
+Add `qname` field to entry types:
 
 ```rust
 // crates/angelscript-core/src/entries/class.rs
@@ -380,34 +416,36 @@ use crate::QualifiedName;
 
 pub struct ClassEntry {
     // NEW: Structured qualified name
-    pub qualified_name: QualifiedName,
+    pub qname: QualifiedName,
 
-    // Existing (kept for compatibility, can be derived from qualified_name)
+    // Existing (kept for compatibility during migration)
     pub name: String,
     pub namespace: Vec<String>,
-    pub qualified_name_str: String,  // Renamed to avoid conflict
+    pub qualified_name: String,
+    pub type_hash: TypeHash,
 
     // ... rest unchanged
 }
 
 impl ClassEntry {
-    /// Create a new class entry with qualified name.
-    pub fn new_with_name(
-        qualified_name: QualifiedName,
-        type_hash: TypeHash,
-        type_kind: TypeKind,
-        source: TypeSource,
-    ) -> Self {
+    /// Create with QualifiedName (new preferred constructor).
+    pub fn with_qname(qname: QualifiedName, type_kind: TypeKind, source: TypeSource) -> Self {
+        let type_hash = qname.to_type_hash();
         Self {
-            name: qualified_name.simple_name().to_string(),
-            namespace: qualified_name.namespace_path().to_vec(),
-            qualified_name_str: qualified_name.to_string(),
-            qualified_name,
+            name: qname.simple_name().to_string(),
+            namespace: qname.namespace_path().to_vec(),
+            qualified_name: qname.to_string(),
+            qname,
             type_hash,
             type_kind,
             source,
             // ... defaults for rest
         }
+    }
+
+    /// Get the structured qualified name.
+    pub fn qname(&self) -> &QualifiedName {
+        &self.qname
     }
 }
 ```
@@ -416,31 +454,98 @@ impl ClassEntry {
 
 ## Backwards Compatibility
 
-During migration, the registry supports both:
-- Old `TypeHash`-based registration (existing FFI code)
-- New `QualifiedName`-based registration (completion pass)
+During migration, provide compatibility shims:
 
 ```rust
 impl SymbolRegistry {
-    /// Legacy: Register type by hash only (for FFI).
-    ///
-    /// Builds the name index from the entry's qualified_name field.
-    pub fn register_type(&mut self, entry: TypeEntry) -> Result<(), RegistrationError> {
-        let name = entry.qualified_name().clone();
-        self.register_type_with_name(entry, name)
-    }
-
     /// Legacy: Get type by hash.
+    ///
+    /// DEPRECATED: Use `get_type()` with QualifiedName instead.
+    #[deprecated(note = "Use get_type() with QualifiedName")]
     pub fn get(&self, hash: TypeHash) -> Option<&TypeEntry> {
-        self.types.get(&hash)
+        self.get_type_by_hash(hash)
     }
 
     /// Legacy: Get mutable type by hash.
+    ///
+    /// DEPRECATED: Use `get_type_mut()` with QualifiedName instead.
+    #[deprecated(note = "Use get_type_mut() with QualifiedName")]
     pub fn get_mut(&mut self, hash: TypeHash) -> Option<&mut TypeEntry> {
-        self.types.get_mut(&hash)
+        self.get_type_by_hash_mut(hash)
+    }
+
+    /// Legacy: Check if type exists by hash.
+    #[deprecated(note = "Use contains_type() with QualifiedName")]
+    pub fn contains_type_by_hash(&self, hash: TypeHash) -> bool {
+        self.type_hash_to_name.contains_key(&hash)
     }
 }
 ```
+
+---
+
+## Migration Notes
+
+### What Changes
+1. `types: FxHashMap<TypeHash, TypeEntry>` → `types: FxHashMap<QualifiedName, TypeEntry>`
+2. `type_by_name: FxHashMap<String, TypeHash>` → removed (QualifiedName is now the key)
+3. New `type_hash_to_name: FxHashMap<TypeHash, QualifiedName>` reverse index
+4. `types_by_namespace` now maps to `QualifiedName` instead of `TypeHash`
+
+### What Stays the Same
+1. Functions still stored by `TypeHash` (hash encodes signature for overload uniqueness)
+2. Globals still stored by `TypeHash`
+3. Namespace index structure
+4. Type aliases
+
+### Why Functions Stay Hash-Indexed
+Functions need hash-based storage because:
+- The hash encodes the full signature (name + parameter types)
+- Overloads have the same name but different hashes
+- The VM needs O(1) lookup by hash for function dispatch
+
+Types don't need this because:
+- Type names are unique (no "type overloading")
+- QualifiedName provides the uniqueness we need
+- Hash can be accessed from the entry when needed
+
+### VM Runtime: Bytecode Module Owns Hash Lookups
+
+The VM needs O(1) hash-based lookup for function dispatch at runtime. This belongs in the **bytecode module**, not the registry:
+
+```rust
+// crates/angelscript-compiler/src/emit/mod.rs (future change)
+
+/// Compiled bytecode module ready for VM execution.
+pub struct CompiledModule {
+    /// Constant pool (strings, numbers, type hashes).
+    pub constants: ConstantPool,
+
+    /// Compiled functions indexed by hash for O(1) VM dispatch.
+    /// Changed from Vec<CompiledFunctionEntry> to FxHashMap.
+    pub functions: FxHashMap<TypeHash, CompiledFunction>,
+
+    /// Global variable initializers.
+    pub global_inits: Vec<GlobalInitEntry>,
+}
+
+/// A compiled function ready for execution.
+pub struct CompiledFunction {
+    /// Function name (for debugging/stack traces).
+    pub name: String,
+    /// Compiled bytecode.
+    pub bytecode: BytecodeChunk,
+}
+```
+
+**Separation of concerns:**
+- **SymbolRegistry** (compile-time): Stores type metadata by `QualifiedName` for name resolution
+- **CompiledModule** (runtime): Stores compiled bytecode by `TypeHash` for VM dispatch
+
+The registry doesn't need hash-based type storage because:
+1. During compilation, we resolve names → get entry → access `entry.type_hash` when needed
+2. At runtime, the VM uses `CompiledModule.functions` (by hash) for dispatch
+3. Type metadata at runtime comes from the compiled bytecode's constant pool
 
 ---
 
@@ -452,49 +557,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn register_type_with_name() {
+    fn register_and_get_type() {
         let mut registry = SymbolRegistry::new();
-        let name = QualifiedName::new("Player", vec!["Game".into()]);
-        let entry = ClassEntry::new_with_name(
-            name.clone(),
-            name.to_type_hash(),
-            TypeKind::ScriptObject,
+        let qname = QualifiedName::new("Player", vec!["Game".into()]);
+        let entry = ClassEntry::with_qname(
+            qname.clone(),
+            TypeKind::reference(),
             TypeSource::ffi_untyped(),
         );
 
-        registry.register_type_with_name(entry.into(), name.clone()).unwrap();
+        registry.register_type(entry.into()).unwrap();
 
-        assert!(registry.contains_type_name(&name));
-        assert!(registry.get_type_by_name(&name).is_some());
+        // Primary lookup by name
+        assert!(registry.contains_type(&qname));
+        assert!(registry.get_type(&qname).is_some());
+
+        // Secondary lookup by hash
+        let hash = qname.to_type_hash();
+        assert!(registry.get_type_by_hash(hash).is_some());
     }
 
     #[test]
-    fn resolve_type_name_global() {
+    fn resolve_type_in_namespace() {
         let mut registry = SymbolRegistry::new();
-        let name = QualifiedName::global("Player");
-        let entry = ClassEntry::new_with_name(
-            name.clone(),
-            name.to_type_hash(),
-            TypeKind::ScriptObject,
+        let qname = QualifiedName::new("Entity", vec!["Game".into()]);
+        let entry = ClassEntry::with_qname(
+            qname.clone(),
+            TypeKind::reference(),
             TypeSource::ffi_untyped(),
         );
-        registry.register_type_with_name(entry.into(), name).unwrap();
-
-        let resolved = registry.resolve_type_name("Player", &[], &[]);
-        assert_eq!(resolved, Some(QualifiedName::global("Player")));
-    }
-
-    #[test]
-    fn resolve_type_name_in_namespace() {
-        let mut registry = SymbolRegistry::new();
-        let name = QualifiedName::new("Entity", vec!["Game".into()]);
-        let entry = ClassEntry::new_with_name(
-            name.clone(),
-            name.to_type_hash(),
-            TypeKind::ScriptObject,
-            TypeSource::ffi_untyped(),
-        );
-        registry.register_type_with_name(entry.into(), name).unwrap();
+        registry.register_type(entry.into()).unwrap();
 
         // Resolve from same namespace
         let resolved = registry.resolve_type_name(
@@ -502,44 +594,29 @@ mod tests {
             &["Game".into()],
             &[],
         );
-        assert_eq!(resolved, Some(QualifiedName::new("Entity", vec!["Game".into()])));
+        assert_eq!(resolved, Some(qname));
     }
 
     #[test]
-    fn resolve_type_name_with_import() {
+    fn duplicate_type_error() {
         let mut registry = SymbolRegistry::new();
-        let name = QualifiedName::new("Vector3", vec!["Math".into()]);
-        let entry = ClassEntry::new_with_name(
-            name.clone(),
-            name.to_type_hash(),
-            TypeKind::value(),
+        let qname = QualifiedName::global("Player");
+
+        let entry1 = ClassEntry::with_qname(
+            qname.clone(),
+            TypeKind::reference(),
             TypeSource::ffi_untyped(),
         );
-        registry.register_type_with_name(entry.into(), name).unwrap();
-
-        // Resolve using import
-        let resolved = registry.resolve_type_name(
-            "Vector3",
-            &[],  // Not in Math namespace
-            &["Math".into()],  // But Math is imported
+        let entry2 = ClassEntry::with_qname(
+            qname.clone(),
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
         );
-        assert_eq!(resolved, Some(QualifiedName::new("Vector3", vec!["Math".into()])));
-    }
 
-    #[test]
-    fn function_overloads_by_name() {
-        let mut registry = SymbolRegistry::new();
-        let name = QualifiedName::global("print");
+        registry.register_type(entry1.into()).unwrap();
+        let result = registry.register_type(entry2.into());
 
-        // Register two overloads
-        let entry1 = FunctionEntry::new_simple("print", vec![], DataType::void());
-        let entry2 = FunctionEntry::new_simple("print", vec![DataType::int32()], DataType::void());
-
-        registry.register_function_with_name(entry1, name.clone()).unwrap();
-        registry.register_function_with_name(entry2, name.clone()).unwrap();
-
-        let overloads = registry.get_functions_by_name(&name);
-        assert_eq!(overloads.len(), 2);
+        assert!(result.is_err());
     }
 }
 ```
@@ -548,10 +625,12 @@ mod tests {
 
 ## Dependencies
 
-- Phase 1: `QualifiedName` struct
+- Phase 1: `QualifiedName` struct (complete)
+- Phase 2: Entry types with `qname` field (this phase adds it)
+- Phase 3: `RegistrationResult` (complete)
 
 ---
 
 ## What's Next
 
-Phase 5 will rewrite the Registration pass to return `RegistrationResult` instead of mutating the registry.
+Phase 5 will update the Registration pass to use the new QualifiedName-based registry methods.

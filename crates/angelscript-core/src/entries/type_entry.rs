@@ -3,7 +3,7 @@
 //! This module provides `TypeEntry`, a single enum that wraps all type entry
 //! kinds for unified storage and iteration in the registry.
 
-use crate::TypeHash;
+use crate::{QualifiedName, TypeHash};
 
 use super::{
     ClassEntry, EnumEntry, FuncdefEntry, InterfaceEntry, PrimitiveEntry, TemplateParamEntry,
@@ -78,6 +78,22 @@ impl TypeEntry {
             TypeEntry::Interface(e) => &e.namespace,
             TypeEntry::Funcdef(e) => &e.namespace,
             TypeEntry::TemplateParam(_) => &[],
+        }
+    }
+
+    /// Get the structured qualified name.
+    ///
+    /// Returns the `QualifiedName` for types that have one (classes, enums,
+    /// interfaces, funcdefs). For primitives and template parameters,
+    /// synthesizes a global namespace QualifiedName from the simple name.
+    pub fn qname(&self) -> QualifiedName {
+        match self {
+            TypeEntry::Primitive(e) => QualifiedName::global(e.name()),
+            TypeEntry::Class(e) => e.qname.clone(),
+            TypeEntry::Enum(e) => e.qname.clone(),
+            TypeEntry::Interface(e) => e.qname.clone(),
+            TypeEntry::Funcdef(e) => e.qname.clone(),
+            TypeEntry::TemplateParam(e) => QualifiedName::global(&e.name),
         }
     }
 

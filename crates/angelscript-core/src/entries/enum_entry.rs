@@ -2,7 +2,7 @@
 //!
 //! This module provides `EnumEntry` for enumeration types.
 
-use crate::TypeHash;
+use crate::{QualifiedName, TypeHash};
 
 use super::{EnumValue, TypeSource};
 
@@ -11,6 +11,8 @@ use super::{EnumValue, TypeSource};
 /// Enums in AngelScript are integer-backed named constants.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumEntry {
+    /// Structured qualified name for name-based lookup.
+    pub qname: QualifiedName,
     /// Unqualified name.
     pub name: String,
     /// Namespace path (e.g., `["Game", "Types"]`).
@@ -34,10 +36,28 @@ impl EnumEntry {
         type_hash: TypeHash,
         source: TypeSource,
     ) -> Self {
+        let name = name.into();
+        let qualified_name = qualified_name.into();
+        let qname = QualifiedName::new(name.clone(), namespace.clone());
         Self {
-            name: name.into(),
+            qname,
+            name,
             namespace,
-            qualified_name: qualified_name.into(),
+            qualified_name,
+            type_hash,
+            source,
+            values: Vec::new(),
+        }
+    }
+
+    /// Create an enum entry from a QualifiedName.
+    pub fn with_qname(qname: QualifiedName, source: TypeSource) -> Self {
+        let type_hash = qname.to_type_hash();
+        Self {
+            name: qname.simple_name().to_string(),
+            namespace: qname.namespace_path().to_vec(),
+            qualified_name: qname.to_string(),
+            qname,
             type_hash,
             source,
             values: Vec::new(),
@@ -48,7 +68,9 @@ impl EnumEntry {
     pub fn ffi(name: impl Into<String>) -> Self {
         let name = name.into();
         let type_hash = TypeHash::from_name(&name);
+        let qname = QualifiedName::global(name.clone());
         Self {
+            qname,
             name: name.clone(),
             namespace: Vec::new(),
             qualified_name: name,
@@ -56,6 +78,11 @@ impl EnumEntry {
             source: TypeSource::ffi_untyped(),
             values: Vec::new(),
         }
+    }
+
+    /// Get the structured qualified name.
+    pub fn qname(&self) -> &QualifiedName {
+        &self.qname
     }
 
     /// Add a value to the enum.

@@ -48,27 +48,33 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use angelscript_core::{
     ClassEntry, EnumEntry, FuncdefEntry, FunctionEntry, GlobalPropertyEntry, InterfaceEntry,
-    PrimitiveEntry, PrimitiveKind, PropertyEntry, RegistrationError, TemplateParamEntry, TypeEntry,
-    TypeHash,
+    PrimitiveEntry, PrimitiveKind, PropertyEntry, QualifiedName, RegistrationError,
+    TemplateParamEntry, TypeEntry, TypeHash,
 };
 
 /// Unified type and function registry.
 ///
 /// Provides central storage for all types and functions in the AngelScript runtime.
-/// All lookups are O(1) by `TypeHash`.
+/// Both types and functions are stored by `QualifiedName` as primary key.
+/// Each `FunctionEntry` and `TypeEntry` contains its hash for VM dispatch.
 #[derive(Default)]
 pub struct SymbolRegistry {
-    /// All types by hash (O(1) lookup).
-    types: FxHashMap<TypeHash, TypeEntry>,
+    // === PRIMARY: Name-based type storage ===
+    /// Types stored by qualified name (PRIMARY storage).
+    types: FxHashMap<QualifiedName, TypeEntry>,
 
-    /// Qualified name to hash lookup.
-    type_by_name: FxHashMap<String, TypeHash>,
+    /// Reverse index: hash -> name (for hash-based lookups).
+    /// Built during registration for backward compatibility.
+    type_hash_to_name: FxHashMap<TypeHash, QualifiedName>,
 
-    /// ALL functions (methods + globals) - single source of truth.
-    functions: FxHashMap<TypeHash, FunctionEntry>,
+    // === PRIMARY: Name-based function storage ===
+    /// Functions stored by qualified name (PRIMARY storage).
+    /// Vec contains overloads with different signatures.
+    functions: FxHashMap<QualifiedName, Vec<FunctionEntry>>,
 
-    /// Overload resolution by qualified name.
-    function_overloads: FxHashMap<String, Vec<TypeHash>>,
+    /// Reverse index: hash -> name (for hash-based lookups).
+    /// Built during registration for backward compatibility.
+    func_hash_to_name: FxHashMap<TypeHash, QualifiedName>,
 
     /// Registered namespaces.
     namespaces: FxHashSet<String>,
@@ -77,13 +83,15 @@ pub struct SymbolRegistry {
     /// Hash is computed from qualified name via `TypeHash::from_name()`.
     globals: FxHashMap<TypeHash, GlobalPropertyEntry>,
 
-    // === Namespace-Partitioned Indexes (for O(1) scope building) ===
-    /// Types indexed by namespace: namespace -> (simple_name -> hash).
-    types_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
+    /// Global lookup by qualified name.
+    globals_by_name: FxHashMap<QualifiedName, TypeHash>,
 
-    /// Functions indexed by namespace: namespace -> (simple_name -> [hashes]).
-    /// Multiple hashes because functions can have overloads.
-    functions_by_namespace: FxHashMap<String, FxHashMap<String, Vec<TypeHash>>>,
+    // === Namespace-Partitioned Indexes (for O(1) scope building) ===
+    /// Types indexed by namespace: namespace -> (simple_name -> QualifiedName).
+    types_by_namespace: FxHashMap<String, FxHashMap<String, QualifiedName>>,
+
+    /// Functions indexed by namespace: namespace -> (simple_name -> QualifiedName).
+    functions_by_namespace: FxHashMap<String, FxHashMap<String, QualifiedName>>,
 
     /// Globals indexed by namespace: namespace -> (simple_name -> hash).
     globals_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
@@ -110,39 +118,89 @@ impl SymbolRegistry {
     }
 
     // ==========================================================================
-    // Type Lookup
+    // Type Lookup (Primary: by QualifiedName)
     // ==========================================================================
 
-    /// Get a type by its hash.
+    /// Get a type by qualified name (primary lookup).
+    pub fn get_type(&self, name: &QualifiedName) -> Option<&TypeEntry> {
+        self.types.get(name)
+    }
+
+    /// Get a mutable type by qualified name (primary lookup).
+    pub fn get_type_mut(&mut self, name: &QualifiedName) -> Option<&mut TypeEntry> {
+        self.types.get_mut(name)
+    }
+
+    /// Check if a type exists by qualified name.
+    pub fn contains_type(&self, name: &QualifiedName) -> bool {
+        self.types.contains_key(name)
+    }
+
+    /// Get a type's hash by qualified name.
+    pub fn get_type_hash(&self, name: &QualifiedName) -> Option<TypeHash> {
+        self.types.get(name).map(|e| e.type_hash())
+    }
+
+    // ==========================================================================
+    // Type Lookup (Secondary: by TypeHash - for backward compatibility)
+    // ==========================================================================
+
+    /// Get a type by its hash (uses reverse index).
+    ///
+    /// This is the legacy lookup method. Prefer `get_type()` with QualifiedName.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use get_type() with QualifiedName instead. Hash-based lookups will be removed in Phase 5-7."
+    )]
     pub fn get(&self, hash: TypeHash) -> Option<&TypeEntry> {
-        self.types.get(&hash)
+        self.type_hash_to_name
+            .get(&hash)
+            .and_then(|name| self.types.get(name))
     }
 
-    /// Get a mutable type by its hash.
+    /// Get a mutable type by its hash (uses reverse index).
+    ///
+    /// This is the legacy lookup method. Prefer `get_type_mut()` with QualifiedName.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use get_type_mut() with QualifiedName instead. Hash-based lookups will be removed in Phase 5-7."
+    )]
     pub fn get_mut(&mut self, hash: TypeHash) -> Option<&mut TypeEntry> {
-        self.types.get_mut(&hash)
+        self.type_hash_to_name
+            .get(&hash)
+            .cloned()
+            .and_then(move |name| self.types.get_mut(&name))
     }
 
-    /// Get a type by its qualified name.
+    /// Get a type by its qualified name string.
     pub fn get_by_name(&self, name: &str) -> Option<&TypeEntry> {
-        self.type_by_name
-            .get(name)
-            .and_then(|hash| self.types.get(hash))
+        let qname = QualifiedName::from_qualified_string(name);
+        self.types.get(&qname)
     }
 
-    /// Check if a type exists by hash.
-    pub fn contains_type(&self, hash: TypeHash) -> bool {
-        self.types.contains_key(&hash)
+    /// Check if a type exists by hash (uses reverse index).
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use contains_type() with QualifiedName instead. Hash-based lookups will be removed in Phase 5-7."
+    )]
+    pub fn contains_type_hash(&self, hash: TypeHash) -> bool {
+        self.type_hash_to_name.contains_key(&hash)
     }
 
-    /// Check if a type exists by name.
+    /// Check if a type exists by name string.
     pub fn contains_type_name(&self, name: &str) -> bool {
-        self.type_by_name.contains_key(name)
+        let qname = QualifiedName::from_qualified_string(name);
+        self.types.contains_key(&qname)
     }
 
     /// Get a mutable reference to a class entry by hash.
     ///
     /// Returns `None` if the type doesn't exist or is not a class.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use get_type_mut() with QualifiedName instead. Hash-based lookups will be removed in Phase 5-7."
+    )]
+    #[allow(deprecated)]
     pub fn get_class_mut(&mut self, hash: TypeHash) -> Option<&mut ClassEntry> {
         self.get_mut(hash)?.as_class_mut()
     }
@@ -150,32 +208,86 @@ impl SymbolRegistry {
     /// Get a mutable reference to an interface entry by hash.
     ///
     /// Returns `None` if the type doesn't exist or is not an interface.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use get_type_mut() with QualifiedName instead. Hash-based lookups will be removed in Phase 5-7."
+    )]
+    #[allow(deprecated)]
     pub fn get_interface_mut(&mut self, hash: TypeHash) -> Option<&mut InterfaceEntry> {
         self.get_mut(hash)?.as_interface_mut()
     }
 
     // ==========================================================================
-    // Function Lookup
+    // Function Lookup (Primary: by QualifiedName)
     // ==========================================================================
 
-    /// Get a function by its hash.
+    /// Get all overloads for a function by qualified name (primary lookup).
+    pub fn get_functions(&self, name: &QualifiedName) -> Option<&[FunctionEntry]> {
+        self.functions.get(name).map(|v| v.as_slice())
+    }
+
+    /// Get mutable overloads for a function by qualified name (primary lookup).
+    pub fn get_functions_mut(&mut self, name: &QualifiedName) -> Option<&mut Vec<FunctionEntry>> {
+        self.functions.get_mut(name)
+    }
+
+    /// Check if a function exists by qualified name.
+    pub fn contains_function_name(&self, name: &QualifiedName) -> bool {
+        self.functions.contains_key(name)
+    }
+
+    // ==========================================================================
+    // Function Lookup (Secondary: by TypeHash - for backward compatibility)
+    // ==========================================================================
+
+    /// Get a function by its hash (uses reverse index).
+    ///
+    /// This is the legacy lookup method. Prefer `get_functions()` with QualifiedName.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use get_functions() with QualifiedName instead. Hash-based lookups will be removed in Phase 5-7."
+    )]
     pub fn get_function(&self, hash: TypeHash) -> Option<&FunctionEntry> {
-        self.functions.get(&hash)
+        self.func_hash_to_name
+            .get(&hash)
+            .and_then(|name| self.functions.get(name))
+            .and_then(|overloads| overloads.iter().find(|f| f.def.func_hash == hash))
     }
 
-    /// Get a mutable function by its hash.
+    /// Get a mutable function by its hash (uses reverse index).
+    ///
+    /// This is the legacy lookup method. Prefer `get_functions_mut()` with QualifiedName.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use get_functions_mut() with QualifiedName instead. Hash-based lookups will be removed in Phase 5-7."
+    )]
     pub fn get_function_mut(&mut self, hash: TypeHash) -> Option<&mut FunctionEntry> {
-        self.functions.get_mut(&hash)
+        self.func_hash_to_name
+            .get(&hash)
+            .cloned()
+            .and_then(move |name| self.functions.get_mut(&name))
+            .and_then(|overloads| overloads.iter_mut().find(|f| f.def.func_hash == hash))
     }
 
-    /// Get all overloads for a function by qualified name.
-    pub fn get_function_overloads(&self, name: &str) -> Option<&[TypeHash]> {
-        self.function_overloads.get(name).map(|v| v.as_slice())
+    /// Get all overloads for a function by qualified name string.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use get_functions() with QualifiedName instead."
+    )]
+    pub fn get_function_overloads(&self, name: &str) -> Option<Vec<TypeHash>> {
+        let qname = QualifiedName::from_qualified_string(name);
+        self.functions
+            .get(&qname)
+            .map(|v| v.iter().map(|f| f.def.func_hash).collect())
     }
 
-    /// Check if a function exists by hash.
+    /// Check if a function exists by hash (uses reverse index).
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use contains_function_name() with QualifiedName instead. Hash-based lookups will be removed in Phase 5-7."
+    )]
     pub fn contains_function(&self, hash: TypeHash) -> bool {
-        self.functions.contains_key(&hash)
+        self.func_hash_to_name.contains_key(&hash)
     }
 
     // ==========================================================================
@@ -184,65 +296,67 @@ impl SymbolRegistry {
 
     /// Register a type entry.
     ///
-    /// Returns an error if a type with the same hash already exists.
+    /// Returns an error if a type with the same qualified name already exists.
     ///
     /// Note: FFI classes do not support inheritance. Script classes can only
     /// inherit from other script classes.
     pub fn register_type(&mut self, entry: TypeEntry) -> Result<(), RegistrationError> {
+        let qname = entry.qname();
         let hash = entry.type_hash();
 
-        // Check for duplicates BEFORE allocating strings
-        if self.types.contains_key(&hash) {
-            return Err(RegistrationError::DuplicateType(
-                entry.qualified_name().to_string(),
-            ));
+        // Check for duplicates by qualified name
+        if self.types.contains_key(&qname) {
+            return Err(RegistrationError::DuplicateType(qname.to_string()));
         }
 
-        // Now allocate strings for successful registration
-        let qualified_name = entry.qualified_name().to_string();
-        let simple_name = entry.name().to_string();
-        let namespace = entry.namespace().join("::");
+        // Build reverse index (hash -> name)
+        self.type_hash_to_name.insert(hash, qname.clone());
 
         // Add to namespace index (skip template params - they belong to their owner)
         if !entry.is_template_param() {
+            let ns_key = qname.namespace_string();
             self.types_by_namespace
-                .entry(namespace)
+                .entry(ns_key.clone())
                 .or_default()
-                .insert(simple_name, hash);
+                .insert(qname.simple_name().to_string(), qname.clone());
+
+            // Register namespace
+            if !qname.is_global() {
+                self.namespaces.insert(ns_key);
+            }
         }
 
-        self.type_by_name.insert(qualified_name, hash);
-        self.types.insert(hash, entry);
+        // Store by qualified name (primary)
+        self.types.insert(qname, entry);
         Ok(())
     }
 
     /// Register a function entry.
     ///
     /// Returns an error if a function with the same hash already exists.
+    #[allow(deprecated)] // Uses get_class_mut internally until Phase 5-7
     pub fn register_function(&mut self, entry: FunctionEntry) -> Result<(), RegistrationError> {
         let hash = entry.def.func_hash;
+        let qname = entry.def.qname().clone();
 
-        // Check for duplicates BEFORE allocating strings
-        if self.functions.contains_key(&hash) {
+        // Check for duplicates by hash (hash encodes full signature)
+        if self.func_hash_to_name.contains_key(&hash) {
             return Err(RegistrationError::DuplicateRegistration {
-                name: entry.def.qualified_name().to_string(),
+                name: qname.to_string(),
                 kind: "function".to_string(),
             });
         }
 
-        // Now allocate strings for successful registration
-        let qualified_name = entry.def.qualified_name();
-        let simple_name = entry.def.name.clone();
-        let namespace = entry.def.namespace.join("::");
+        // Build reverse index (hash -> name)
+        self.func_hash_to_name.insert(hash, qname.clone());
 
         // Add to namespace index (only for global functions, not methods)
         if entry.def.object_type.is_none() {
+            let ns_key = qname.namespace_string();
             self.functions_by_namespace
-                .entry(namespace)
+                .entry(ns_key)
                 .or_default()
-                .entry(simple_name)
-                .or_default()
-                .push(hash);
+                .insert(qname.simple_name().to_string(), qname.clone());
         }
 
         // If this is a method, add to the owning class's vtable
@@ -264,11 +378,8 @@ impl SymbolRegistry {
             }
         }
 
-        self.function_overloads
-            .entry(qualified_name.to_string())
-            .or_default()
-            .push(hash);
-        self.functions.insert(hash, entry);
+        // Store by qualified name (primary) - functions grouped by name with overloads
+        self.functions.entry(qname).or_default().push(entry);
         Ok(())
     }
 
@@ -278,16 +389,19 @@ impl SymbolRegistry {
     /// They are always in the global namespace (empty string key).
     pub fn register_primitive(&mut self, entry: PrimitiveEntry) {
         let hash = entry.type_hash;
-        let name = entry.name().to_string();
+        let name = entry.name();
+        let qname = QualifiedName::global(name);
+
+        // Build reverse index
+        self.type_hash_to_name.insert(hash, qname.clone());
 
         // Add to namespace index (global namespace = empty string)
         self.types_by_namespace
             .entry(String::new())
             .or_default()
-            .insert(name.clone(), hash);
+            .insert(name.to_string(), qname.clone());
 
-        self.type_by_name.insert(name, hash);
-        self.types.insert(hash, TypeEntry::Primitive(entry));
+        self.types.insert(qname, TypeEntry::Primitive(entry));
     }
 
     /// Register all primitive types.
@@ -345,9 +459,9 @@ impl SymbolRegistry {
         self.types.values().filter_map(|t| t.as_template_param())
     }
 
-    /// Iterate over all functions.
+    /// Iterate over all functions (flattens all overloads).
     pub fn functions(&self) -> impl Iterator<Item = &FunctionEntry> {
-        self.functions.values()
+        self.functions.values().flatten()
     }
 
     /// Get the number of registered types.
@@ -355,9 +469,9 @@ impl SymbolRegistry {
         self.types.len()
     }
 
-    /// Get the number of registered functions.
+    /// Get the number of registered functions (counts all overloads).
     pub fn function_count(&self) -> usize {
-        self.functions.len()
+        self.functions.values().map(|v| v.len()).sum()
     }
 
     // ==========================================================================
@@ -367,14 +481,15 @@ impl SymbolRegistry {
     /// Get the inheritance chain for a class (excluding the class itself).
     ///
     /// Returns base classes from immediate parent to root.
+    #[allow(deprecated)] // Uses get() internally until Phase 5-7
     pub fn base_class_chain(&self, hash: TypeHash) -> Vec<&ClassEntry> {
         let mut chain = Vec::new();
         let mut current = hash;
 
-        while let Some(entry) = self.types.get(&current)
+        while let Some(entry) = self.get(current)
             && let Some(class) = entry.as_class()
             && let Some(base) = class.base_class
-            && let Some(base_entry) = self.types.get(&base)
+            && let Some(base_entry) = self.get(base)
             && let Some(base_class) = base_entry.as_class()
         {
             chain.push(base_class);
@@ -387,15 +502,16 @@ impl SymbolRegistry {
     /// Get all methods for a class, including inherited methods.
     ///
     /// Methods are returned in order: own methods first, then inherited.
+    #[allow(deprecated)] // Uses get() and get_function() internally until Phase 5-7
     pub fn all_methods(&self, class_hash: TypeHash) -> Vec<&FunctionEntry> {
         let mut methods = Vec::new();
 
         // Own methods
-        if let Some(entry) = self.types.get(&class_hash)
+        if let Some(entry) = self.get(class_hash)
             && let Some(class) = entry.as_class()
         {
             for method_hash in class.all_methods() {
-                if let Some(func) = self.functions.get(&method_hash) {
+                if let Some(func) = self.get_function(method_hash) {
                     methods.push(func);
                 }
             }
@@ -404,7 +520,7 @@ impl SymbolRegistry {
         // Inherited methods
         for base in self.base_class_chain(class_hash) {
             for method_hash in base.all_methods() {
-                if let Some(func) = self.functions.get(&method_hash) {
+                if let Some(func) = self.get_function(method_hash) {
                     methods.push(func);
                 }
             }
@@ -416,11 +532,12 @@ impl SymbolRegistry {
     /// Get all properties for a class, including inherited properties.
     ///
     /// Properties are returned in order: own properties first, then inherited.
+    #[allow(deprecated)] // Uses get() internally until Phase 5-7
     pub fn all_properties(&self, class_hash: TypeHash) -> Vec<&PropertyEntry> {
         let mut properties = Vec::new();
 
         // Own properties
-        if let Some(entry) = self.types.get(&class_hash)
+        if let Some(entry) = self.get(class_hash)
             && let Some(class) = entry.as_class()
         {
             properties.extend(class.properties.iter());
@@ -447,7 +564,7 @@ impl SymbolRegistry {
             .get(ns)
             .into_iter()
             .flat_map(|name_map| name_map.values())
-            .filter_map(|hash| self.types.get(hash))
+            .filter_map(|qname| self.types.get(qname))
     }
 
     /// Iterate over all registered namespaces.
@@ -461,6 +578,89 @@ impl SymbolRegistry {
     }
 
     // ==========================================================================
+    // Name Resolution
+    // ==========================================================================
+
+    /// Resolve a type name in context.
+    ///
+    /// Tries the following in order:
+    /// 1. Already qualified name (contains ::)
+    /// 2. Current namespace (innermost to outermost)
+    /// 3. Each import as prefix
+    /// 4. Global namespace
+    pub fn resolve_type_name(
+        &self,
+        name: &str,
+        current_namespace: &[String],
+        imports: &[String],
+    ) -> Option<QualifiedName> {
+        // 1. If already qualified, try direct lookup
+        if name.contains("::") {
+            let qn = QualifiedName::from_qualified_string(name);
+            if self.types.contains_key(&qn) {
+                return Some(qn);
+            }
+            return None;
+        }
+
+        // 2. Try current namespace (innermost to outermost)
+        for i in (0..=current_namespace.len()).rev() {
+            let ns = current_namespace[..i].to_vec();
+            let qn = QualifiedName::new(name, ns);
+            if self.types.contains_key(&qn) {
+                return Some(qn);
+            }
+        }
+
+        // 3. Try each import as prefix
+        for import in imports {
+            let ns: Vec<String> = import.split("::").map(|s| s.to_string()).collect();
+            let qn = QualifiedName::new(name, ns);
+            if self.types.contains_key(&qn) {
+                return Some(qn);
+            }
+        }
+
+        // 4. Global namespace already tried in step 2 when i=0
+        None
+    }
+
+    /// Resolve a function name in context (returns all overloads).
+    pub fn resolve_function_name(
+        &self,
+        name: &str,
+        current_namespace: &[String],
+        imports: &[String],
+    ) -> Option<(QualifiedName, &[FunctionEntry])> {
+        // Similar logic to resolve_type_name
+        if name.contains("::") {
+            let qn = QualifiedName::from_qualified_string(name);
+            if let Some(funcs) = self.get_functions(&qn) {
+                return Some((qn, funcs));
+            }
+            return None;
+        }
+
+        for i in (0..=current_namespace.len()).rev() {
+            let ns = current_namespace[..i].to_vec();
+            let qn = QualifiedName::new(name, ns);
+            if let Some(funcs) = self.get_functions(&qn) {
+                return Some((qn, funcs));
+            }
+        }
+
+        for import in imports {
+            let ns: Vec<String> = import.split("::").map(|s| s.to_string()).collect();
+            let qn = QualifiedName::new(name, ns);
+            if let Some(funcs) = self.get_functions(&qn) {
+                return Some((qn, funcs));
+            }
+        }
+
+        None
+    }
+
+    // ==========================================================================
     // Global Properties
     // ==========================================================================
 
@@ -469,24 +669,25 @@ impl SymbolRegistry {
     /// Returns an error if a global with the same qualified name already exists.
     pub fn register_global(&mut self, entry: GlobalPropertyEntry) -> Result<(), RegistrationError> {
         let hash = entry.type_hash;
+        let qname = QualifiedName::new(entry.name.clone(), entry.namespace.clone());
 
-        // Check for duplicates BEFORE allocating strings
-        if self.globals.contains_key(&hash) {
+        // Check for duplicates by qualified name
+        if self.globals_by_name.contains_key(&qname) {
             return Err(RegistrationError::DuplicateRegistration {
-                name: entry.qualified_name.clone(),
+                name: qname.to_string(),
                 kind: "global property".to_string(),
             });
         }
 
-        // Now allocate strings for successful registration
-        let simple_name = entry.name.clone();
-        let namespace = entry.namespace.join("::");
+        // Add to name index
+        self.globals_by_name.insert(qname.clone(), hash);
 
         // Add to namespace index
+        let ns_key = qname.namespace_string();
         self.globals_by_namespace
-            .entry(namespace)
+            .entry(ns_key)
             .or_default()
-            .insert(simple_name, hash);
+            .insert(qname.simple_name().to_string(), hash);
 
         self.globals.insert(hash, entry);
         Ok(())
@@ -499,7 +700,17 @@ impl SymbolRegistry {
 
     /// Get a global property by its qualified name.
     pub fn get_global_by_name(&self, name: &str) -> Option<&GlobalPropertyEntry> {
-        self.globals.get(&TypeHash::from_name(name))
+        let qname = QualifiedName::from_qualified_string(name);
+        self.globals_by_name
+            .get(&qname)
+            .and_then(|hash| self.globals.get(hash))
+    }
+
+    /// Get a global property by its QualifiedName.
+    pub fn get_global_by_qname(&self, name: &QualifiedName) -> Option<&GlobalPropertyEntry> {
+        self.globals_by_name
+            .get(name)
+            .and_then(|hash| self.globals.get(hash))
     }
 
     /// Check if a global property exists by hash.
@@ -523,21 +734,23 @@ impl SymbolRegistry {
 
     /// Get all types in a namespace.
     ///
-    /// Returns a map of simple name -> TypeHash for all types in the namespace.
+    /// Returns a map of simple name -> QualifiedName for all types in the namespace.
     /// Use empty string for the global namespace.
-    pub fn get_namespace_types(&self, namespace: &str) -> Option<&FxHashMap<String, TypeHash>> {
+    pub fn get_namespace_types(
+        &self,
+        namespace: &str,
+    ) -> Option<&FxHashMap<String, QualifiedName>> {
         self.types_by_namespace.get(namespace)
     }
 
     /// Get all functions in a namespace.
     ///
-    /// Returns a map of simple name -> Vec<TypeHash> for all functions in the namespace.
-    /// Multiple hashes per name indicate overloads.
+    /// Returns a map of simple name -> QualifiedName for all functions in the namespace.
     /// Use empty string for the global namespace.
     pub fn get_namespace_functions(
         &self,
         namespace: &str,
-    ) -> Option<&FxHashMap<String, Vec<TypeHash>>> {
+    ) -> Option<&FxHashMap<String, QualifiedName>> {
         self.functions_by_namespace.get(namespace)
     }
 
@@ -668,7 +881,7 @@ impl std::fmt::Debug for SymbolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SymbolRegistry")
             .field("types", &self.types.len())
-            .field("functions", &self.functions.len())
+            .field("functions", &self.function_count())
             .field("globals", &self.globals.len())
             .field("namespaces", &self.namespaces.len())
             .field("type_aliases", &self.type_aliases.len())
@@ -677,6 +890,7 @@ impl std::fmt::Debug for SymbolRegistry {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // Tests use deprecated hash-based lookups until migration in Phase 5-7
 mod tests {
     use super::*;
     use angelscript_core::{
@@ -716,7 +930,7 @@ mod tests {
         let class = ClassEntry::ffi("Player", TypeKind::reference());
         registry.register_type(class.into()).unwrap();
 
-        assert!(registry.contains_type(TypeHash::from_name("Player")));
+        assert!(registry.contains_type_hash(TypeHash::from_name("Player")));
         assert!(registry.contains_type_name("Player"));
     }
 
@@ -935,12 +1149,12 @@ mod tests {
 
         // Register a class in the global namespace (empty namespace)
         let class = ClassEntry::ffi("Player", TypeKind::reference());
-        let hash = class.type_hash;
+        let qname = class.qname.clone();
         registry.register_type(class.into()).unwrap();
 
         // Should be indexed under empty string namespace
         let types = registry.get_namespace_types("").unwrap();
-        assert_eq!(types.get("Player"), Some(&hash));
+        assert_eq!(types.get("Player"), Some(&qname));
     }
 
     #[test]
@@ -958,12 +1172,12 @@ mod tests {
             TypeKind::reference(),
             TypeSource::ffi_untyped(),
         );
-        let hash = class.type_hash;
+        let qname = class.qname.clone();
         registry.register_type(class.into()).unwrap();
 
         // Should be indexed under "Game" namespace
         let types = registry.get_namespace_types("Game").unwrap();
-        assert_eq!(types.get("Player"), Some(&hash));
+        assert_eq!(types.get("Player"), Some(&qname));
 
         // Should NOT be in global namespace
         assert!(
@@ -991,12 +1205,12 @@ mod tests {
             TypeKind::reference(),
             TypeSource::ffi_untyped(),
         );
-        let hash = class.type_hash;
+        let qname = class.qname.clone();
         registry.register_type(class.into()).unwrap();
 
         // Should be indexed under "Game::Entities" namespace
         let types = registry.get_namespace_types("Game::Entities").unwrap();
-        assert_eq!(types.get("Enemy"), Some(&hash));
+        assert_eq!(types.get("Enemy"), Some(&qname));
     }
 
     #[test]
@@ -1019,7 +1233,10 @@ mod tests {
 
         // Should be indexed under empty string namespace
         let funcs = registry.get_namespace_functions("").unwrap();
-        assert!(funcs.get("print").unwrap().contains(&hash));
+        let qname = funcs.get("print").unwrap();
+        // Verify we can look up the function by the QualifiedName
+        let entries = registry.get_functions(qname).unwrap();
+        assert!(entries.iter().any(|f| f.def.func_hash == hash));
     }
 
     #[test]
@@ -1043,7 +1260,9 @@ mod tests {
 
         // Should be indexed under "Game" namespace
         let funcs = registry.get_namespace_functions("Game").unwrap();
-        assert!(funcs.get("log").unwrap().contains(&hash));
+        let qname = funcs.get("log").unwrap();
+        let entries = registry.get_functions(qname).unwrap();
+        assert!(entries.iter().any(|f| f.def.func_hash == hash));
     }
 
     #[test]
@@ -1088,10 +1307,11 @@ mod tests {
 
         // Both overloads should be indexed under "Game" namespace
         let funcs = registry.get_namespace_functions("Game").unwrap();
-        let log_overloads = funcs.get("log").unwrap();
-        assert_eq!(log_overloads.len(), 2);
-        assert!(log_overloads.contains(&hash1));
-        assert!(log_overloads.contains(&hash2));
+        let qname = funcs.get("log").unwrap();
+        let entries = registry.get_functions(qname).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|f| f.def.func_hash == hash1));
+        assert!(entries.iter().any(|f| f.def.func_hash == hash2));
     }
 
     #[test]
@@ -1545,5 +1765,158 @@ mod tests {
                 .get_function(TypeHash::from_function("globalFunc", &[]))
                 .is_some()
         );
+    }
+
+    // ==========================================================================
+    // QualifiedName-based function storage tests
+    // ==========================================================================
+
+    #[test]
+    fn get_functions_by_qname() {
+        let mut registry = SymbolRegistry::new();
+        let qname = QualifiedName::new("process", vec!["System".to_string()]);
+
+        // Define two overloads: process(int) and process(float)
+        let mut def1 = FunctionDef::new(
+            TypeHash::from_function("System::process_int", &[primitives::INT32]),
+            "process".to_string(),
+            vec![],
+            vec![Param::new("x", DataType::simple(primitives::INT32))],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        def1.namespace = vec!["System".to_string()];
+
+        let mut def2 = FunctionDef::new(
+            TypeHash::from_function("System::process_float", &[primitives::FLOAT]),
+            "process".to_string(),
+            vec![],
+            vec![Param::new("x", DataType::simple(primitives::FLOAT))],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        def2.namespace = vec!["System".to_string()];
+
+        registry
+            .register_function(FunctionEntry::ffi(def1))
+            .unwrap();
+        registry
+            .register_function(FunctionEntry::ffi(def2))
+            .unwrap();
+
+        // Verify get_functions returns ALL overloads for this QName
+        let overloads = registry
+            .get_functions(&qname)
+            .expect("Should find functions");
+        assert_eq!(overloads.len(), 2);
+
+        // Verify distinct hashes are present
+        let hashes: Vec<TypeHash> = overloads.iter().map(|f| f.def.func_hash).collect();
+        assert!(hashes.contains(&TypeHash::from_function(
+            "System::process_int",
+            &[primitives::INT32]
+        )));
+        assert!(hashes.contains(&TypeHash::from_function(
+            "System::process_float",
+            &[primitives::FLOAT]
+        )));
+    }
+
+    #[test]
+    fn func_hash_reverse_index_lookup() {
+        let mut registry = SymbolRegistry::new();
+        let name = "GlobalFunc";
+        let qname = QualifiedName::global(name);
+        let hash = TypeHash::from_function(name, &[]);
+
+        let def = FunctionDef::new(
+            hash,
+            name.to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+
+        registry.register_function(FunctionEntry::ffi(def)).unwrap();
+
+        // Verify contains_function works (relies on reverse index)
+        assert!(registry.contains_function(hash));
+
+        // Verify get_function works (relies on reverse index -> QName lookup)
+        let retrieved = registry
+            .get_function(hash)
+            .expect("Should find function by hash");
+        assert_eq!(retrieved.def.qname(), &qname);
+        assert_eq!(retrieved.def.func_hash, hash);
+    }
+
+    #[test]
+    fn contains_function_name_works() {
+        let mut registry = SymbolRegistry::new();
+        let qname = QualifiedName::new("update", vec!["Game".to_string()]);
+
+        // Before registration
+        assert!(!registry.contains_function_name(&qname));
+
+        let mut def = FunctionDef::new(
+            TypeHash::from_function("Game::update", &[]),
+            "update".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        def.namespace = vec!["Game".to_string()];
+
+        registry.register_function(FunctionEntry::ffi(def)).unwrap();
+
+        // After registration
+        assert!(registry.contains_function_name(&qname));
+
+        // Different qname should not exist
+        let other_qname = QualifiedName::new("update", vec!["Other".to_string()]);
+        assert!(!registry.contains_function_name(&other_qname));
+    }
+
+    #[test]
+    fn get_functions_mut_allows_modification() {
+        let mut registry = SymbolRegistry::new();
+        let qname = QualifiedName::global("test_func");
+
+        let def = FunctionDef::new(
+            TypeHash::from_function("test_func", &[]),
+            "test_func".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+
+        registry.register_function(FunctionEntry::ffi(def)).unwrap();
+
+        // Verify we can get mutable access
+        let overloads = registry
+            .get_functions_mut(&qname)
+            .expect("Should find functions");
+        assert_eq!(overloads.len(), 1);
+
+        // Verify the function is there
+        assert_eq!(overloads[0].def.name, "test_func");
     }
 }

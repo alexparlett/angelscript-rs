@@ -82,7 +82,9 @@ pub fn instantiate_template_type<T: TemplateCallback>(
     }
 
     // 3. Check if already in registry (FFI specialization not in cache)
-    if registry.contains_type(instance_hash) || global_registry.contains_type(instance_hash) {
+    if registry.contains_type_hash(instance_hash)
+        || global_registry.contains_type_hash(instance_hash)
+    {
         cache.cache_type_instance(template_hash, arg_hashes, instance_hash);
         return Ok(instance_hash);
     }
@@ -346,7 +348,9 @@ pub fn instantiate_child_funcdef(
     }
 
     // 3. Check if already in registry
-    if registry.contains_type(instance_hash) || global_registry.contains_type(instance_hash) {
+    if registry.contains_type_hash(instance_hash)
+        || global_registry.contains_type_hash(instance_hash)
+    {
         cache.cache_type_instance(funcdef_hash, arg_hashes.clone(), instance_hash);
         return Ok(instance_hash);
     }
@@ -403,32 +407,33 @@ pub fn instantiate_child_funcdef(
         .collect();
     let inst_return = substitute_type(funcdef_return, &subst_map);
 
-    // Create instance name (e.g., "array<int>::Callback")
-    let parent_instance_name = format_template_instance_name(
-        &parent_template_name,
-        parent_type_args,
-        registry,
-        global_registry,
-    );
-    let inst_qualified_name = format!("{}::{}", parent_instance_name, funcdef_name);
-
     // Get or create instantiated parent (we need the parent instance to exist)
     // Note: We assume the parent was already instantiated, otherwise this is an error
     let parent_instance_hash = TypeHash::from_template_instance(parent_hash, &arg_hashes);
-    if !registry.contains_type(parent_instance_hash)
-        && !global_registry.contains_type(parent_instance_hash)
-    {
-        return Err(CompilationError::UnknownType {
-            name: format!("Parent instance {} not found", parent_instance_name),
-            span,
-        });
-    }
 
-    // Create funcdef instance
+    // Look up the parent instance to get its QualifiedName
+    let parent_instance_qname = registry
+        .get(parent_instance_hash)
+        .or_else(|| global_registry.get(parent_instance_hash))
+        .map(|e| e.qname().clone())
+        .ok_or_else(|| {
+            let parent_instance_name = format_template_instance_name(
+                &parent_template_name,
+                parent_type_args,
+                registry,
+                global_registry,
+            );
+            CompilationError::UnknownType {
+                name: format!("Parent instance {} not found", parent_instance_name),
+                span,
+            }
+        })?;
+
+    // Create funcdef instance with parent's QualifiedName for proper namespace handling
+    // e.g., parent qname "Game::array<int>" -> child qname "Game::array<int>::Callback"
     let inst_entry = FuncdefEntry::new_child(
         funcdef_name,
-        vec![], // namespace - inherited from parent
-        inst_qualified_name,
+        &parent_instance_qname,
         instance_hash,
         funcdef_source,
         inst_params,
@@ -742,8 +747,8 @@ pub fn format_type_args(
 mod tests {
     use super::*;
     use angelscript_core::{
-        FunctionTraits, Param, TemplateParamEntry, TemplateValidation, TypeKind, Visibility,
-        entries::TypeSource, primitives,
+        FunctionTraits, Param, QualifiedName, TemplateParamEntry, TemplateValidation, TypeKind,
+        Visibility, entries::TypeSource, primitives,
     };
 
     struct NoOpCallbacks;
@@ -1224,10 +1229,10 @@ mod tests {
 
         // Create child funcdef: array::Callback(const T&in) -> bool
         let callback_hash = TypeHash::from_name("array::Callback");
+        let parent_qname = QualifiedName::global("array");
         let callback_entry = FuncdefEntry::new_child(
             "Callback",
-            vec![],
-            "array::Callback",
+            &parent_qname,
             callback_hash,
             TypeSource::ffi_untyped(),
             vec![DataType::with_ref_in(t_hash)],
@@ -1273,10 +1278,11 @@ mod tests {
             &global_registry,
         );
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         let instance_hash = result.unwrap();
 
         // Verify instance exists
+        #[allow(deprecated)]
         let instance = registry.get(instance_hash).unwrap();
         let funcdef = instance.as_funcdef().unwrap();
         assert_eq!(funcdef.params[0].type_hash, primitives::INT32);
@@ -1865,10 +1871,10 @@ mod tests {
 
         // Create child funcdef with non-template parent
         let callback_hash = TypeHash::from_name("NonTemplate::Callback");
+        let parent_qname = QualifiedName::global("NonTemplate");
         let callback = FuncdefEntry::new_child(
             "Callback",
-            vec![],
-            "NonTemplate::Callback",
+            &parent_qname,
             callback_hash,
             TypeSource::ffi_untyped(),
             vec![DataType::simple(primitives::INT32)],
