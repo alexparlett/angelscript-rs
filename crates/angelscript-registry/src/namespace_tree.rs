@@ -16,7 +16,6 @@ use rustc_hash::FxHashMap;
 ///
 /// When multiple `using namespace` directives bring the same name into scope,
 /// resolution is ambiguous and must be reported as an error.
-#[derive(Debug)]
 pub enum ResolutionResult<T> {
     /// Found exactly one match.
     Found(T),
@@ -26,6 +25,41 @@ pub enum ResolutionResult<T> {
     /// Not found in any searched location.
     NotFound,
 }
+
+// Manual trait implementations to avoid requiring bounds on T for basic usage
+
+impl<T: Clone> Clone for ResolutionResult<T> {
+    fn clone(&self) -> Self {
+        match self {
+            ResolutionResult::Found(v) => ResolutionResult::Found(v.clone()),
+            ResolutionResult::Ambiguous(v) => ResolutionResult::Ambiguous(v.clone()),
+            ResolutionResult::NotFound => ResolutionResult::NotFound,
+        }
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for ResolutionResult<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolutionResult::Found(v) => f.debug_tuple("Found").field(v).finish(),
+            ResolutionResult::Ambiguous(v) => f.debug_tuple("Ambiguous").field(v).finish(),
+            ResolutionResult::NotFound => write!(f, "NotFound"),
+        }
+    }
+}
+
+impl<T: PartialEq> PartialEq for ResolutionResult<T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ResolutionResult::Found(a), ResolutionResult::Found(b)) => a == b,
+            (ResolutionResult::Ambiguous(a), ResolutionResult::Ambiguous(b)) => a == b,
+            (ResolutionResult::NotFound, ResolutionResult::NotFound) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<T: Eq> Eq for ResolutionResult<T> {}
 
 impl<T> ResolutionResult<T> {
     /// Check if resolution found exactly one match.
@@ -175,19 +209,19 @@ impl NamespaceTree {
     }
 
     /// Get or create a namespace path from root.
-    pub fn get_or_create_path(&mut self, path: &[String]) -> NodeIndex {
+    pub fn get_or_create_path<S: AsRef<str>>(&mut self, path: &[S]) -> NodeIndex {
         let mut current = self.root;
         for segment in path {
-            current = self.get_or_create_child(current, segment);
+            current = self.get_or_create_child(current, segment.as_ref());
         }
         current
     }
 
     /// Get an existing namespace by path, or None if it doesn't exist.
-    pub fn get_path(&self, path: &[String]) -> Option<NodeIndex> {
+    pub fn get_path<S: AsRef<str>>(&self, path: &[S]) -> Option<NodeIndex> {
         let mut current = self.root;
         for segment in path {
-            current = self.find_child(current, segment)?;
+            current = self.find_child(current, segment.as_ref())?;
         }
         Some(current)
     }
@@ -297,9 +331,9 @@ impl NamespaceTree {
     ///
     /// The type is stored in the specified namespace and indexed by its type hash
     /// for O(1) lookups.
-    pub fn register_type(
+    pub fn register_type<S: AsRef<str>>(
         &mut self,
-        namespace_path: &[String],
+        namespace_path: &[S],
         simple_name: &str,
         entry: TypeEntry,
     ) -> Result<(), RegistrationError> {
@@ -341,7 +375,10 @@ impl NamespaceTree {
 
     /// Get a mutable type by hash.
     pub fn get_type_by_hash_mut(&mut self, hash: TypeHash) -> Option<&mut TypeEntry> {
-        let (ns_node, name) = self.type_hash_index.get(&hash)?.clone();
+        // Copy NodeIndex (it's Copy) and clone String separately to satisfy borrow checker
+        // We need the name for the hashmap lookup after mutably borrowing the graph
+        let &(ns_node, ref name) = self.type_hash_index.get(&hash)?;
+        let name = name.clone();
         self.graph.node_weight_mut(ns_node)?.types.get_mut(&name)
     }
 
@@ -374,53 +411,13 @@ impl NamespaceTree {
         name: &str,
         ctx: &ResolutionContext,
     ) -> ResolutionResult<&TypeEntry> {
-        // Handle qualified names (contains ::)
-        if name.contains("::") {
-            return match self.resolve_qualified_type(name) {
-                Some(entry) => ResolutionResult::Found(entry),
-                None => ResolutionResult::NotFound,
-            };
-        }
-
-        // 1. Check current namespace and walk up to root
-        // Types found in the namespace hierarchy take precedence (no ambiguity possible)
-        let mut current = Some(ctx.current_namespace);
-        while let Some(ns_node) = current {
-            if let Some(ns_data) = self.graph.node_weight(ns_node) {
-                if let Some(entry) = ns_data.types.get(name) {
-                    return ResolutionResult::Found(entry);
-                }
+        // Delegate to resolve_type_with_location_checked and discard location
+        match self.resolve_type_with_location_checked(name, ctx) {
+            ResolutionResult::Found((entry, _)) => ResolutionResult::Found(entry),
+            ResolutionResult::Ambiguous(matches) => {
+                ResolutionResult::Ambiguous(matches.into_iter().map(|(n, (e, _))| (n, e)).collect())
             }
-            current = self.find_parent(ns_node);
-        }
-
-        // 2. Check using directive namespaces from current and all parent scopes
-        // Collect all matches to detect ambiguity
-        let mut matches: Vec<(NodeIndex, &TypeEntry)> = Vec::new();
-
-        // Walk from current namespace up to root, collecting using directive matches
-        let mut scope = Some(ctx.current_namespace);
-        while let Some(ns_node) = scope {
-            for using_ns in self.get_using_directives(ns_node) {
-                if let Some(ns_data) = self.graph.node_weight(using_ns) {
-                    if let Some(entry) = ns_data.types.get(name) {
-                        // Check if we already found this same type (same hash)
-                        if !matches
-                            .iter()
-                            .any(|(_, e)| e.type_hash() == entry.type_hash())
-                        {
-                            matches.push((using_ns, entry));
-                        }
-                    }
-                }
-            }
-            scope = self.find_parent(ns_node);
-        }
-
-        match matches.len() {
-            0 => ResolutionResult::NotFound,
-            1 => ResolutionResult::Found(matches.into_iter().next().unwrap().1),
-            _ => ResolutionResult::Ambiguous(matches),
+            ResolutionResult::NotFound => ResolutionResult::NotFound,
         }
     }
 
@@ -557,9 +554,9 @@ impl NamespaceTree {
     // ========================================================================
 
     /// Register a function (allows overloads with same name).
-    pub fn register_function(
+    pub fn register_function<S: AsRef<str>>(
         &mut self,
-        namespace_path: &[String],
+        namespace_path: &[S],
         simple_name: &str,
         entry: FunctionEntry,
     ) -> Result<(), RegistrationError> {
@@ -701,9 +698,9 @@ impl NamespaceTree {
     // ========================================================================
 
     /// Register a global property.
-    pub fn register_global(
+    pub fn register_global<S: AsRef<str>>(
         &mut self,
-        namespace_path: &[String],
+        namespace_path: &[S],
         simple_name: &str,
         entry: GlobalPropertyEntry,
     ) -> Result<(), RegistrationError> {
@@ -890,11 +887,10 @@ mod tests {
         let mut tree = NamespaceTree::new();
         let entry = make_test_type_in_namespace("Player", &["Game"]);
 
-        tree.register_type(&["Game".into()], "Player", entry)
-            .unwrap();
+        tree.register_type(&["Game"], "Player", entry).unwrap();
 
         let ctx = ResolutionContext {
-            current_namespace: tree.get_path(&["Game".into()]).unwrap(),
+            current_namespace: tree.get_path(&["Game"]).unwrap(),
         };
 
         let resolved = tree.resolve_type("Player", &ctx);
@@ -906,13 +902,12 @@ mod tests {
     fn resolve_via_using_directive() {
         let mut tree = NamespaceTree::new();
 
-        let utils = tree.get_or_create_path(&["Utils".into()]);
-        let game = tree.get_or_create_path(&["Game".into()]);
+        let utils = tree.get_or_create_path(&["Utils"]);
+        let game = tree.get_or_create_path(&["Game"]);
 
         // Register Helper in Utils
         let entry = make_test_type_in_namespace("Helper", &["Utils"]);
-        tree.register_type(&["Utils".into()], "Helper", entry)
-            .unwrap();
+        tree.register_type(&["Utils"], "Helper", entry).unwrap();
 
         // Add using directive from Game to Utils
         tree.add_using_directive(game, utils);
@@ -930,13 +925,13 @@ mod tests {
     fn using_not_transitive() {
         let mut tree = NamespaceTree::new();
 
-        let a = tree.get_or_create_path(&["A".into()]);
-        let b = tree.get_or_create_path(&["B".into()]);
-        let c = tree.get_or_create_path(&["C".into()]);
+        let a = tree.get_or_create_path(&["A"]);
+        let b = tree.get_or_create_path(&["B"]);
+        let c = tree.get_or_create_path(&["C"]);
 
         // Register CType in C
         let entry = make_test_type_in_namespace("CType", &["C"]);
-        tree.register_type(&["C".into()], "CType", entry).unwrap();
+        tree.register_type(&["C"], "CType", entry).unwrap();
 
         // A uses B, B uses C
         tree.add_using_directive(a, b);
@@ -957,14 +952,13 @@ mod tests {
     fn parent_scope_using_inherited() {
         let mut tree = NamespaceTree::new();
 
-        let utils = tree.get_or_create_path(&["Utils".into()]);
-        let game = tree.get_or_create_path(&["Game".into()]);
-        let entities = tree.get_or_create_path(&["Game".into(), "Entities".into()]);
+        let utils = tree.get_or_create_path(&["Utils"]);
+        let game = tree.get_or_create_path(&["Game"]);
+        let entities = tree.get_or_create_path(&["Game", "Entities"]);
 
         // Register Helper in Utils
         let entry = make_test_type_in_namespace("Helper", &["Utils"]);
-        tree.register_type(&["Utils".into()], "Helper", entry)
-            .unwrap();
+        tree.register_type(&["Utils"], "Helper", entry).unwrap();
 
         // Add using directive from Game to Utils
         tree.add_using_directive(game, utils);
@@ -985,17 +979,15 @@ mod tests {
     fn ambiguous_using_detection() {
         let mut tree = NamespaceTree::new();
 
-        let ns_b = tree.get_or_create_path(&["B".into()]);
-        let ns_c = tree.get_or_create_path(&["C".into()]);
-        let ns_a = tree.get_or_create_path(&["A".into()]);
+        let ns_b = tree.get_or_create_path(&["B"]);
+        let ns_c = tree.get_or_create_path(&["C"]);
+        let ns_a = tree.get_or_create_path(&["A"]);
 
         // Register Helper in both B and C with different type hashes
         let entry_b = make_test_type_in_namespace("Helper", &["B"]);
         let entry_c = make_test_type_in_namespace("Helper", &["C"]);
-        tree.register_type(&["B".into()], "Helper", entry_b)
-            .unwrap();
-        tree.register_type(&["C".into()], "Helper", entry_c)
-            .unwrap();
+        tree.register_type(&["B"], "Helper", entry_b).unwrap();
+        tree.register_type(&["C"], "Helper", entry_c).unwrap();
 
         // A uses both B and C
         tree.add_using_directive(ns_a, ns_b);
@@ -1020,11 +1012,10 @@ mod tests {
 
         // Register Player in Game
         let entry = make_test_type_in_namespace("Player", &["Game"]);
-        tree.register_type(&["Game".into()], "Player", entry)
-            .unwrap();
+        tree.register_type(&["Game"], "Player", entry).unwrap();
 
         let ctx = ResolutionContext {
-            current_namespace: tree.get_path(&["Game".into()]).unwrap(),
+            current_namespace: tree.get_path(&["Game"]).unwrap(),
         };
 
         let qname = tree.resolve_type_to_name("Player", &ctx);
@@ -1039,10 +1030,9 @@ mod tests {
         let entry1 = make_test_type_in_namespace("Player", &["Game"]);
         let entry2 = make_test_type_in_namespace("Player", &["Game"]);
 
-        tree.register_type(&["Game".into()], "Player", entry1)
-            .unwrap();
+        tree.register_type(&["Game"], "Player", entry1).unwrap();
 
-        let result = tree.register_type(&["Game".into()], "Player", entry2);
+        let result = tree.register_type(&["Game"], "Player", entry2);
         assert!(result.is_err());
         match result {
             Err(RegistrationError::DuplicateType(name)) => {
@@ -1057,7 +1047,7 @@ mod tests {
         let mut tree = NamespaceTree::new();
 
         let entry = make_test_type_in_namespace("Player", &["Game", "Entities"]);
-        tree.register_type(&["Game".into(), "Entities".into()], "Player", entry)
+        tree.register_type(&["Game", "Entities"], "Player", entry)
             .unwrap();
 
         // Resolve from root context using qualified name
@@ -1077,8 +1067,7 @@ mod tests {
         let entry = make_test_type_in_namespace("Player", &["Game"]);
         let type_hash = entry.type_hash();
 
-        tree.register_type(&["Game".into()], "Player", entry)
-            .unwrap();
+        tree.register_type(&["Game"], "Player", entry).unwrap();
 
         let found = tree.get_type_by_hash(type_hash);
         assert!(found.is_some());
@@ -1094,11 +1083,10 @@ mod tests {
         let mut tree = NamespaceTree::new();
 
         let entry = make_test_function("update");
-        tree.register_function(&["Game".into()], "update", entry)
-            .unwrap();
+        tree.register_function(&["Game"], "update", entry).unwrap();
 
         let ctx = ResolutionContext {
-            current_namespace: tree.get_path(&["Game".into()]).unwrap(),
+            current_namespace: tree.get_path(&["Game"]).unwrap(),
         };
 
         let resolved = tree.resolve_function("update", &ctx);
@@ -1114,13 +1102,11 @@ mod tests {
         let entry1 = make_test_function_with_hash("update", "update()");
         let entry2 = make_test_function_with_hash("update", "update(int)");
 
-        tree.register_function(&["Game".into()], "update", entry1)
-            .unwrap();
-        tree.register_function(&["Game".into()], "update", entry2)
-            .unwrap();
+        tree.register_function(&["Game"], "update", entry1).unwrap();
+        tree.register_function(&["Game"], "update", entry2).unwrap();
 
         let ctx = ResolutionContext {
-            current_namespace: tree.get_path(&["Game".into()]).unwrap(),
+            current_namespace: tree.get_path(&["Game"]).unwrap(),
         };
 
         let resolved = tree.resolve_function("update", &ctx);
@@ -1135,10 +1121,9 @@ mod tests {
         let entry1 = make_test_function("update");
         let entry2 = make_test_function("update"); // Same hash
 
-        tree.register_function(&["Game".into()], "update", entry1)
-            .unwrap();
+        tree.register_function(&["Game"], "update", entry1).unwrap();
 
-        let result = tree.register_function(&["Game".into()], "update", entry2);
+        let result = tree.register_function(&["Game"], "update", entry2);
         assert!(result.is_err());
         match result {
             Err(RegistrationError::DuplicateFunction(name)) => {
@@ -1152,13 +1137,12 @@ mod tests {
     fn function_via_using_directive() {
         let mut tree = NamespaceTree::new();
 
-        let utils = tree.get_or_create_path(&["Utils".into()]);
-        let game = tree.get_or_create_path(&["Game".into()]);
+        let utils = tree.get_or_create_path(&["Utils"]);
+        let game = tree.get_or_create_path(&["Game"]);
 
         // Register helper function in Utils
         let entry = make_test_function("helper");
-        tree.register_function(&["Utils".into()], "helper", entry)
-            .unwrap();
+        tree.register_function(&["Utils"], "helper", entry).unwrap();
 
         // Add using directive from Game to Utils
         tree.add_using_directive(game, utils);
@@ -1180,11 +1164,11 @@ mod tests {
         let mut tree = NamespaceTree::new();
 
         let entry = make_test_global("MAX_PLAYERS");
-        tree.register_global(&["Game".into()], "MAX_PLAYERS", entry)
+        tree.register_global(&["Game"], "MAX_PLAYERS", entry)
             .unwrap();
 
         let ctx = ResolutionContext {
-            current_namespace: tree.get_path(&["Game".into()]).unwrap(),
+            current_namespace: tree.get_path(&["Game"]).unwrap(),
         };
 
         let resolved = tree.resolve_global("MAX_PLAYERS", &ctx);
@@ -1199,10 +1183,9 @@ mod tests {
         let entry1 = make_test_global("PI");
         let entry2 = make_test_global("PI");
 
-        tree.register_global(&["Math".into()], "PI", entry1)
-            .unwrap();
+        tree.register_global(&["Math"], "PI", entry1).unwrap();
 
-        let result = tree.register_global(&["Math".into()], "PI", entry2);
+        let result = tree.register_global(&["Math"], "PI", entry2);
         assert!(result.is_err());
         match result {
             Err(RegistrationError::DuplicateGlobal(name)) => {
@@ -1216,12 +1199,12 @@ mod tests {
     fn global_via_using_directive() {
         let mut tree = NamespaceTree::new();
 
-        let math = tree.get_or_create_path(&["Math".into()]);
-        let game = tree.get_or_create_path(&["Game".into()]);
+        let math = tree.get_or_create_path(&["Math"]);
+        let game = tree.get_or_create_path(&["Game"]);
 
         // Register PI in Math
         let entry = make_test_global("PI");
-        tree.register_global(&["Math".into()], "PI", entry).unwrap();
+        tree.register_global(&["Math"], "PI", entry).unwrap();
 
         // Add using directive from Game to Math
         tree.add_using_directive(game, math);
@@ -1239,16 +1222,15 @@ mod tests {
     fn namespace_hierarchy_takes_precedence() {
         let mut tree = NamespaceTree::new();
 
-        let utils = tree.get_or_create_path(&["Utils".into()]);
-        let game = tree.get_or_create_path(&["Game".into()]);
+        let utils = tree.get_or_create_path(&["Utils"]);
+        let game = tree.get_or_create_path(&["Game"]);
 
         // Register Helper in both Game and Utils
         let entry_game = make_test_type_in_namespace("Helper", &["Game"]);
         let entry_utils = make_test_type_in_namespace("Helper", &["Utils"]);
 
-        tree.register_type(&["Game".into()], "Helper", entry_game)
-            .unwrap();
-        tree.register_type(&["Utils".into()], "Helper", entry_utils)
+        tree.register_type(&["Game"], "Helper", entry_game).unwrap();
+        tree.register_type(&["Utils"], "Helper", entry_utils)
             .unwrap();
 
         // Add using directive from Game to Utils
@@ -1271,7 +1253,7 @@ mod tests {
     #[test]
     fn create_namespace_path() {
         let mut tree = NamespaceTree::new();
-        let node = tree.get_or_create_path(&["Game".into(), "Entities".into()]);
+        let node = tree.get_or_create_path(&["Game", "Entities"]);
 
         let path = tree.get_namespace_path(node);
         assert_eq!(path, vec!["Game", "Entities"]);
@@ -1280,20 +1262,20 @@ mod tests {
     #[test]
     fn find_existing_path() {
         let mut tree = NamespaceTree::new();
-        tree.get_or_create_path(&["Game".into(), "Entities".into()]);
+        tree.get_or_create_path(&["Game", "Entities"]);
 
-        let found = tree.get_path(&["Game".into(), "Entities".into()]);
+        let found = tree.get_path(&["Game", "Entities"]);
         assert!(found.is_some());
 
-        let not_found = tree.get_path(&["Other".into()]);
+        let not_found = tree.get_path(&["Other"]);
         assert!(not_found.is_none());
     }
 
     #[test]
     fn using_directives() {
         let mut tree = NamespaceTree::new();
-        let game = tree.get_or_create_path(&["Game".into()]);
-        let utils = tree.get_or_create_path(&["Utils".into()]);
+        let game = tree.get_or_create_path(&["Game"]);
+        let utils = tree.get_or_create_path(&["Utils"]);
 
         tree.add_using_directive(game, utils);
 
@@ -1305,7 +1287,7 @@ mod tests {
     #[test]
     fn qualified_name() {
         let mut tree = NamespaceTree::new();
-        let node = tree.get_or_create_path(&["Game".into(), "Entities".into()]);
+        let node = tree.get_or_create_path(&["Game", "Entities"]);
 
         let qname = tree.qualified_name(node, "Player");
         assert_eq!(qname, "Game::Entities::Player");
@@ -1321,7 +1303,7 @@ mod tests {
     #[test]
     fn empty_path_returns_root() {
         let mut tree = NamespaceTree::new();
-        let node = tree.get_or_create_path(&[]);
+        let node = tree.get_or_create_path::<&str>(&[]);
         assert_eq!(node, tree.root());
     }
 
@@ -1368,8 +1350,8 @@ mod tests {
     #[test]
     fn duplicate_using_directive_is_ignored() {
         let mut tree = NamespaceTree::new();
-        let game = tree.get_or_create_path(&["Game".into()]);
-        let utils = tree.get_or_create_path(&["Utils".into()]);
+        let game = tree.get_or_create_path(&["Game"]);
+        let utils = tree.get_or_create_path(&["Utils"]);
 
         tree.add_using_directive(game, utils);
         tree.add_using_directive(game, utils); // duplicate
@@ -1381,9 +1363,9 @@ mod tests {
     #[test]
     fn multiple_using_directives() {
         let mut tree = NamespaceTree::new();
-        let game = tree.get_or_create_path(&["Game".into()]);
-        let utils = tree.get_or_create_path(&["Utils".into()]);
-        let math = tree.get_or_create_path(&["Math".into()]);
+        let game = tree.get_or_create_path(&["Game"]);
+        let utils = tree.get_or_create_path(&["Utils"]);
+        let math = tree.get_or_create_path(&["Math"]);
 
         tree.add_using_directive(game, utils);
         tree.add_using_directive(game, math);
@@ -1397,12 +1379,7 @@ mod tests {
     #[test]
     fn deep_namespace_path() {
         let mut tree = NamespaceTree::new();
-        let node = tree.get_or_create_path(&[
-            "Company".into(),
-            "Product".into(),
-            "Module".into(),
-            "SubModule".into(),
-        ]);
+        let node = tree.get_or_create_path(&["Company", "Product", "Module", "SubModule"]);
 
         let path = tree.get_namespace_path(node);
         assert_eq!(path, vec!["Company", "Product", "Module", "SubModule"]);
@@ -1414,7 +1391,7 @@ mod tests {
     #[test]
     fn get_namespace_mut_allows_modification() {
         let mut tree = NamespaceTree::new();
-        let game = tree.get_or_create_path(&["Game".into()]);
+        let game = tree.get_or_create_path(&["Game"]);
 
         // Modify the namespace data
         if let Some(data) = tree.get_namespace_mut(game) {
@@ -1430,8 +1407,8 @@ mod tests {
     #[test]
     fn find_parent_returns_correct_parent() {
         let mut tree = NamespaceTree::new();
-        let game = tree.get_or_create_path(&["Game".into()]);
-        let entities = tree.get_or_create_path(&["Game".into(), "Entities".into()]);
+        let game = tree.get_or_create_path(&["Game"]);
+        let entities = tree.get_or_create_path(&["Game", "Entities"]);
 
         let parent = tree.find_parent(entities);
         assert_eq!(parent, Some(game));
