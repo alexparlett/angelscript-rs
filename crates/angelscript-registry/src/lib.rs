@@ -45,8 +45,13 @@ mod namespace_tree;
 mod registry;
 
 pub use module::{HasClassMeta, HasFunctionMeta, IntoFunctionMeta, Module};
-pub use namespace_tree::{NamespaceData, NamespaceEdge, NamespaceTree};
+pub use namespace_tree::{
+    NamespaceData, NamespaceEdge, NamespaceTree, ResolutionContext, ResolutionResult,
+};
 pub use registry::SymbolRegistry;
+
+// Re-export RegistrationError from core
+pub use angelscript_core::RegistrationError;
 
 // Re-export from core for backwards compatibility during transition
 pub use angelscript_core::{

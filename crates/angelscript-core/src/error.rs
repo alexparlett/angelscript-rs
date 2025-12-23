@@ -442,7 +442,7 @@ impl std::error::Error for ParseErrors {}
 ///
 /// This error type consolidates errors from both FFI registration
 /// (native types/functions) and script module registration.
-#[derive(Debug, Clone, PartialEq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RegistrationError {
     /// A referenced type was not found.
     #[error("type not found: {0}")]
@@ -451,6 +451,14 @@ pub enum RegistrationError {
     /// A type with this name already exists.
     #[error("duplicate type: {0}")]
     DuplicateType(String),
+
+    /// A function with the same signature already exists in this namespace.
+    #[error("duplicate function: {0}")]
+    DuplicateFunction(String),
+
+    /// A global property with the same name already exists in this namespace.
+    #[error("duplicate global: {0}")]
+    DuplicateGlobal(String),
 
     /// A registration with this name already exists.
     #[error("duplicate registration: {name} already registered as {kind}")]
@@ -477,6 +485,14 @@ pub enum RegistrationError {
     /// The type is invalid or malformed.
     #[error("invalid type: {0}")]
     InvalidType(String),
+
+    /// The namespace node is invalid.
+    #[error("invalid namespace")]
+    InvalidNamespace,
+
+    /// The specified namespace does not exist.
+    #[error("unknown namespace: {0}")]
+    UnknownNamespace(String),
 
     /// A behavior is forbidden for this type kind.
     #[error("type '{type_name}': {behavior} behavior not allowed - {reason}")]
