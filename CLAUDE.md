@@ -39,16 +39,41 @@ Forward declarations fail because type resolution happens during Registration be
 Index registry by `QualifiedName` (namespace, name) instead of `TypeHash`. TypeHash computed lazily for bytecode.
 
 ### Implementation Phases
-1. **Core Types** (`angelscript-core`): `QualifiedName`, `UnresolvedType`, `UnresolvedParam`, `UnresolvedSignature`
-2. **Unresolved Entries** (`angelscript-core`): `UnresolvedClass`, `UnresolvedInterface`, etc.
-3. **Registration Result** (`angelscript-compiler`): `RegistrationResult` struct
-4. **Registry Updates** (`angelscript-registry`): `QualifiedName`-based lookup
-5. **NamespaceTree** (`angelscript-registry`): Tree structure with petgraph
-6. **NamespaceTree Storage** (`angelscript-registry`): Type/function registration and resolution
-7. **SymbolRegistry Integration** (`angelscript-registry`): Integrate tree into registry
-8. **Registration Pass** (`angelscript-compiler`): Build tree, collect unresolved entries
-9. **Completion Pass** (`angelscript-compiler`): Resolve using directives, transform types
-10. **Compilation Pass** (`angelscript-compiler`): Use resolved registry
+1. **Core Types** (`angelscript-core`): `QualifiedName`, `UnresolvedType`, `UnresolvedParam`, `UnresolvedSignature` - DONE
+2. **Unresolved Entries** (`angelscript-core`): `UnresolvedClass`, `UnresolvedInterface`, etc. - DONE
+3. **Registration Result** (`angelscript-compiler`): `RegistrationResult` struct - DONE
+4. **Registry Updates** (`angelscript-registry`): `QualifiedName`-based lookup - DONE
+5. **NamespaceTree** (`angelscript-registry`): Tree structure with petgraph - DONE
+6. **NamespaceTree Storage** (`angelscript-registry`): Type/function registration and resolution - DONE
+7. **Unified Tree** (`angelscript-registry`): Single tree with unit isolation - **NEXT**
+8. **SymbolRegistry Integration** (`angelscript-registry`): Integrate tree into registry
+9. **Registration Pass** (`angelscript-compiler`): Build tree, collect unresolved entries
+10. **Completion Pass** (`angelscript-compiler`): Resolve using directives, transform types
+11. **Compilation Pass** (`angelscript-compiler`): Use resolved registry
+
+### Phase 7: Unified Tree (Current Priority)
+
+Single tree with units as top-level nodes:
+- `$ffi/` - FFI-registered types/functions
+- `$shared/` - Shared entities across units
+- `$unit_N/` - Per-compilation-unit namespaces
+
+Edge types:
+- `Contains(String)` - Parent contains child namespace
+- `Uses` - Explicit `using namespace` directive
+- `Mirrors` - Auto-link to same-named namespace in `$ffi`/`$shared`
+
+Resolution order at each level:
+1. Local symbols
+2. `Mirrors` edges (FFI/shared counterparts)
+3. `Uses` edges (explicit imports)
+4. Walk up to parent
+
+Stashed changes (`git stash show -p stash@{0}`):
+- TypeBehaviors stores FunctionEntry (constructors, factories, operators)
+- ClassEntry.methods stores FunctionEntry
+- Overload resolution takes &[&FunctionEntry]
+- VTable keeps TypeHash (runtime dispatch)
 
 ### Design Documents
 - `tasks/qualified_name_registry.md` - High-level design
@@ -58,8 +83,9 @@ Index registry by `QualifiedName` (namespace, name) instead of `TypeHash`. TypeH
 - `tasks/qualified_name_registry/04_registry.md` - Registry updates
 - `tasks/qualified_name_registry/05_namespace_tree.md` - NamespaceTree core
 - `tasks/qualified_name_registry/06_namespace_tree_storage.md` - Tree storage/resolution
-- `tasks/qualified_name_registry/07_symbol_registry_integration.md` - Registry integration
-- `tasks/qualified_name_registry/08_registration.md` - Registration pass
-- `tasks/qualified_name_registry/09_completion.md` - Completion pass
-- `tasks/qualified_name_registry/10_compilation.md` - Compilation pass
+- `tasks/qualified_name_registry/07_unified_tree.md` - Unified tree with unit isolation
+- `tasks/qualified_name_registry/08_symbol_registry_integration.md` - Registry integration
+- `tasks/qualified_name_registry/09_registration.md` - Registration pass
+- `tasks/qualified_name_registry/10_completion.md` - Completion pass
+- `tasks/qualified_name_registry/11_compilation.md` - Compilation pass
 - `tasks/qualified_name_registry/namespace_tree_design.md` - Comprehensive design reference

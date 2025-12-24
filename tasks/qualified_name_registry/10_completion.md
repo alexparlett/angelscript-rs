@@ -1,14 +1,15 @@
-# Phase 6: Completion Pass Rewrite
+# Phase 10: Completion Pass Rewrite
 
 ## Overview
 
 Rewrite the Completion pass to:
 1. Take `RegistrationResult` as input
-2. **Resolve using directives** into namespace tree edges (FIRST)
-3. Build a name index for resolution
-4. Transform unresolved entries into resolved entries
-5. Populate the registry (namespace tree)
-6. Handle inheritance, vtables, and hash indexes
+2. **Create `Uses` edges** from `using namespace` directives
+3. Transform unresolved entries into resolved entries (uses `Mirrors` + `Uses` edges for resolution)
+4. Register types/functions into the unit's namespace tree
+5. Handle inheritance, vtables, and hash indexes
+
+**Depends on:** Phase 7 (Unified Tree), Phase 9 (Registration Pass)
 
 **Files:**
 - `crates/angelscript-compiler/src/passes/completion.rs` (rewrite)

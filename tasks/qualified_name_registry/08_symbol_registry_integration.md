@@ -1,8 +1,10 @@
-# Phase 7: SymbolRegistry Integration
+# Phase 8: SymbolRegistry Integration
 
 ## Overview
 
-Integrate `NamespaceTree` into `SymbolRegistry`, replacing the flat `HashMap` storage while maintaining backward compatibility via hash indexes.
+Integrate the unified `NamespaceTree` (from Phase 7) into `SymbolRegistry`. The tree has unit roots (`$ffi/`, `$shared/`, `$unit_N/`) with `Mirrors` edges for cross-root namespace linking.
+
+**Depends on:** Phase 7 (Unified Tree)
 
 **Files:**
 - `crates/angelscript-registry/src/symbol_registry.rs` (rewrite)
@@ -459,9 +461,23 @@ mod tests {
 
 - Phase 5: NamespaceTree core
 - Phase 6: NamespaceTree storage/resolution
+- Phase 7: Unified Tree with unit isolation
+
+---
+
+## Stashed Changes
+
+The git stash (`git stash show -p stash@{0}`) contains related refactoring that should be incorporated:
+
+- **TypeBehaviors stores FunctionEntry** (not TypeHash) for constructors, factories, operators
+- **ClassEntry.methods stores FunctionEntry** as `FxHashMap<String, Vec<FunctionEntry>>`
+- **Overload resolution takes `&[&FunctionEntry]`** directly
+- **VTable keeps TypeHash** (for runtime dispatch only)
+
+These changes align with the unified tree design - compile-time resolution uses `FunctionEntry` directly, avoiding hash lookups. Apply after Phase 7 is complete.
 
 ---
 
 ## What's Next
 
-Phase 8 updates the Registration pass to build the namespace tree and collect using directives.
+Phase 9 updates the Registration pass to build namespace nodes and create `Mirrors` edges.

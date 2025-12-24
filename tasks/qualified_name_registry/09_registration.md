@@ -1,13 +1,16 @@
-# Phase 5: Registration Pass Rewrite
+# Phase 9: Registration Pass Rewrite
 
 ## Overview
 
 Rewrite the Registration pass to:
-1. Build the namespace tree structure (nodes only, no types)
-2. Collect all unresolved declarations into `RegistrationResult`
-3. Collect `using namespace` directives for later edge creation
+1. Build namespace nodes within the unit's subtree (`$unit_N/`)
+2. Add `Mirrors` edges when creating namespaces that exist in `$ffi`/`$shared`
+3. Collect all unresolved declarations into `RegistrationResult`
+4. Collect `using namespace` directives for `Uses` edge creation
 
 No type resolution, no TypeHash computation.
+
+**Depends on:** Phase 7 (Unified Tree), Phase 8 (SymbolRegistry Integration)
 
 **Files:**
 - `crates/angelscript-compiler/src/passes/registration.rs` (rewrite)

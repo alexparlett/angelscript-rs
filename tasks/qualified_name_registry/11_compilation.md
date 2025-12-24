@@ -1,8 +1,10 @@
-# Phase 7: Compilation Pass Updates
+# Phase 11: Compilation Pass Updates
 
 ## Overview
 
-Update the Compilation pass to use the fully-resolved registry from Completion. The core compilation logic stays the same - we just update the type lookup APIs.
+Update the Compilation pass to use the unified tree with resolved types. The tree has `Mirrors` and `Uses` edges for resolution. No separate global registry - just `$ffi/` and `$shared/` roots in the same tree.
+
+**Depends on:** Phase 7 (Unified Tree), Phase 10 (Completion Pass)
 
 **Files:**
 - `crates/angelscript-compiler/src/passes/compilation.rs` (update)
@@ -13,19 +15,21 @@ Update the Compilation pass to use the fully-resolved registry from Completion. 
 
 ## Key Changes
 
-### Registry is Now Read-Only
+### Single Registry with Unit Root
 
-The compilation pass receives a fully-resolved registry. No mutations needed.
+The compilation pass uses a single registry. The `unit_root` NodeIndex identifies this unit's subtree.
 
 ```rust
-pub struct CompilationPass<'reg, 'global> {
-    /// Unit registry (read-only, fully resolved).
+pub struct CompilationPass<'reg> {
+    /// Single registry with unified tree.
     registry: &'reg SymbolRegistry,
-    /// Global registry (read-only, FFI types).
-    global_registry: &'global SymbolRegistry,
+    /// This unit's root in the tree.
+    unit_root: NodeIndex,
     // ... rest unchanged
 }
 ```
+
+Resolution uses `Mirrors` edges (to `$ffi`/`$shared`) and `Uses` edges (explicit imports) automatically.
 
 ### Type Lookup by QualifiedName
 
