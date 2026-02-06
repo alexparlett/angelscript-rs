@@ -14,8 +14,6 @@ pub enum BinaryOp {
     // Logical OR (precedence 3)
     /// `||` or `or`
     LogicalOr,
-    /// `^^` or `xor`
-    LogicalXor,
 
     // Logical AND (precedence 4)
     /// `&&` or `and`
@@ -33,7 +31,9 @@ pub enum BinaryOp {
     /// `&`
     BitwiseAnd,
 
-    // Equality (precedence 8)
+    // Equality / logical XOR (precedence 8)
+    /// `^^` or `xor`
+    LogicalXor,
     /// `==`
     Equal,
     /// `!=`
@@ -90,7 +90,7 @@ impl BinaryOp {
         use BinaryOp::*;
         match self {
             // Precedence 3 - Logical OR (left-associative)
-            LogicalOr | LogicalXor => (3, 4),
+            LogicalOr => (3, 4),
 
             // Precedence 4 - Logical AND (left-associative)
             LogicalAnd => (5, 6),
@@ -104,8 +104,8 @@ impl BinaryOp {
             // Precedence 7 - Bitwise AND (left-associative)
             BitwiseAnd => (11, 12),
 
-            // Precedence 8 - Equality (left-associative)
-            Equal | NotEqual | Is | NotIs => (13, 14),
+            // Precedence 8 - Equality / logical XOR (left-associative)
+            Equal | NotEqual | Is | NotIs | LogicalXor => (13, 14),
 
             // Precedence 9 - Relational (left-associative)
             Less | LessEqual | Greater | GreaterEqual => (15, 16),
@@ -407,6 +407,16 @@ mod tests {
         // Right-associative: right_bp < left_bp
         let (pow_l, pow_r) = BinaryOp::Pow.binding_power();
         assert!(pow_r < pow_l);
+
+        // LogicalXor (^^) has same precedence as equality (==, !=, is, !is)
+        let (xor_l, xor_r) = BinaryOp::LogicalXor.binding_power();
+        let (eq_l, eq_r) = BinaryOp::Equal.binding_power();
+        assert_eq!(xor_l, eq_l);
+        assert_eq!(xor_r, eq_r);
+
+        // LogicalXor binds tighter than LogicalAnd
+        let (and_l, _) = BinaryOp::LogicalAnd.binding_power();
+        assert!(xor_l > and_l);
     }
 
     #[test]
