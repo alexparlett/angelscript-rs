@@ -10,7 +10,7 @@
 //!
 //! 1. **Lexer** - Tokenizes source text ([`lexer`] module)
 //! 2. **Parser** - Builds an AST ([`Parser::parse`] function)
-//! 3. **Compiler** - Compiles to bytecode ([`angelscript_compiler`])
+//! 3. **Compiler** - Compiles to bytecode (planned)
 //! 4. **VM** - Executes bytecode (planned)
 //!
 //! # Example: Basic Usage (Recommended)

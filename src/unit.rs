@@ -479,6 +479,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "compiler logic removed"]
     fn build_simple_unit() {
         let mut unit = Unit::new();
         unit.add_source("test.as", "void main() { }").unwrap();
@@ -780,6 +781,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "compiler logic removed"]
     fn string_literal_fails_without_context() {
         // Without context, there's no string factory, so string literals should fail
         let mut unit = Unit::new();

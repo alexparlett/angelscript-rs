@@ -7,9 +7,4 @@ edition = "2024"
 angelscript-core = { path = "../angelscript-core" }
 angelscript-registry = { path = "../angelscript-registry" }
 angelscript-parser = { path = "../angelscript-parser" }
-thiserror.workspace = true
 rustc-hash.workspace = true
-xxhash-rust.workspace = true
-
-[dev-dependencies]
-bumpalo.workspace = true

@@ -12,7 +12,6 @@
 //! - [`DataType`]: Complete type with modifiers (const, handle, reference)
 //! - [`TypeDef`]: Type definitions (primitives, classes, interfaces, enums, funcdefs)
 //! - [`FunctionDef`]: Function definitions with complete signatures
-//! - [`ExprInfo`]: Expression type checking results
 //! - [`TypeBehaviors`]: Lifecycle behaviors for types
 //! - [`FfiExpr`]: Owned expressions for FFI default arguments
 //! - [`Span`]: Source location tracking for error reporting
