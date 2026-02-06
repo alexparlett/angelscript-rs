@@ -512,20 +512,16 @@ impl Context {
             }
             Behavior::AddRef => {
                 // AddRef needs Release to be complete - store for later if needed
-                if class_entry.behaviors.release.is_some() {
-                    class_entry
-                        .behaviors
-                        .set_ref_counting(func_hash, class_entry.behaviors.release.unwrap());
+                if let Some(release) = class_entry.behaviors.release {
+                    class_entry.behaviors.set_ref_counting(func_hash, release);
                 }
                 // Store addref for when release comes
                 class_entry.behaviors.addref = Some(func_hash);
             }
             Behavior::Release => {
                 // Release needs AddRef to be complete
-                if class_entry.behaviors.addref.is_some() {
-                    class_entry
-                        .behaviors
-                        .set_ref_counting(class_entry.behaviors.addref.unwrap(), func_hash);
+                if let Some(addref) = class_entry.behaviors.addref {
+                    class_entry.behaviors.set_ref_counting(addref, func_hash);
                 }
                 // Store release for when addref comes
                 class_entry.behaviors.release = Some(func_hash);
