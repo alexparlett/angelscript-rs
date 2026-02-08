@@ -112,6 +112,106 @@ namespace Utils
 // Both Add and Multiply are in Utils
 ```
 
+### Using Namespace Directive
+
+The `using namespace` directive allows access to entities from a specific namespace without requiring the scope resolution operator (`::`) on every reference.
+
+**Syntax:**
+
+```angelscript
+using namespace <namespace_name>;
+```
+
+**Scope of Effect:**
+
+- When declared at **global scope**, the directive makes the namespace entities visible throughout the entire script.
+- When declared **inside a namespace**, the directive affects only that namespace scope.
+
+**Example:**
+
+```angelscript
+namespace test
+{
+    void func() { }
+    int value = 42;
+}
+
+// Using directive at global scope
+using namespace test;
+
+void main()
+{
+    func();           // Resolves to test::func() without explicit qualification
+    int x = value;    // Resolves to test::value
+}
+```
+
+**Multiple Using Directives:**
+
+```angelscript
+namespace Math
+{
+    float pi = 3.14159f;
+}
+
+namespace Physics
+{
+    float gravity = 9.81f;
+}
+
+using namespace Math;
+using namespace Physics;
+
+void main()
+{
+    float circumference = 2.0f * pi;   // Math::pi
+    float force = gravity * mass;       // Physics::gravity
+}
+```
+
+**Name Conflicts:**
+
+If two imported namespaces declare the same entity name, the reference becomes ambiguous and requires explicit qualification:
+
+```angelscript
+namespace A { int value = 1; }
+namespace B { int value = 2; }
+
+using namespace A;
+using namespace B;
+
+void main()
+{
+    // int x = value;  // ERROR: Ambiguous reference
+    int x = A::value;  // OK: Explicit qualification resolves ambiguity
+}
+```
+
+**Using Within Namespaces:**
+
+```angelscript
+namespace Utils
+{
+    void helper() { }
+}
+
+namespace App
+{
+    using namespace Utils;  // Only visible within App namespace
+
+    void process()
+    {
+        helper();  // Resolves to Utils::helper()
+    }
+}
+
+void main()
+{
+    // helper();  // ERROR: Utils not visible here
+    App::process();  // OK
+}
+```
+
 ### Entity Types in Namespaces
 
 All global entity types can be declared within namespaces:
@@ -211,6 +311,7 @@ namespace Engine
 
 - **Module structure:** Namespaces are not separate module-level entities with their own storage. Instead, they are a scoping mechanism applied to the symbol table. Each entity (function, variable, class, etc.) is stored in its normal location (function table, variable table, type table) but with a namespace-qualified name. The compiler tracks the current namespace context during parsing and prefixes entity registrations accordingly.
 - **Symbol resolution:** Name lookup proceeds from the innermost scope outward: first the current namespace, then parent namespaces, then the global scope. If a match is found at any level, lookup stops. The `::` prefix forces lookup to start at the global scope. Fully qualified names (e.g. `A::B::name`) are resolved by walking the namespace hierarchy left to right. When the scope resolution operator is used, only the specified namespace is searched -- no fallback to parent or global scope occurs for the qualified portion.
+- **Using namespace resolution:** The `using namespace` directive adds the specified namespace to the compiler's symbol search path for unqualified name lookups. When an unqualified name is encountered, the compiler searches: (1) the current local scope, (2) the current namespace, (3) parent namespaces, (4) namespaces added via `using namespace` (in declaration order), (5) the global scope. If multiple `using` directives introduce the same name, the reference is ambiguous and requires explicit qualification. The directive affects only subsequent name lookups in the scope where it's declared (global or namespace-level).
 - **Initialization:** Namespaces have no runtime representation. They affect only compile-time name resolution. Global variables inside namespaces follow the same initialization rules as other global variables (primitives first, then non-primitives). The initialization order is not affected by namespace boundaries.
 - **Type system:** Namespace-qualified type names (e.g. `Game::Player`) are resolved to the same type entries as their unqualified counterparts within the namespace. The namespace is part of the type's qualified name for disambiguation purposes but does not create a separate type system. Two types with the same name in different namespaces are distinct types with distinct type IDs.
 - **Special cases:** When using cross-module features like `import`, the imported function's namespace context from the source module is preserved. Registered (native) application entities can also be placed in namespaces by the host. Namespace-scoped entities can be declared as `shared`, following the same rules as global-scope shared entities. The namespace hierarchy supports an arbitrary depth of nesting.
@@ -230,9 +331,9 @@ namespace Engine
 **Notes:**
 - `NamespaceDecl.path` is `&[Ident]`, supporting nested namespace paths (e.g., `namespace A::B::C` produces a path of `["A", "B", "C"]`).
 - `NamespaceDecl.items` is `&[Item]`, meaning namespaces can contain any top-level item type (functions, classes, variables, enums, nested namespaces, etc.).
-- `UsingNamespaceDecl` represents `using namespace Game::Utils;` directives. It is a separate `Item` variant (`Item::UsingNamespace`), not part of `NamespaceDecl`.
+- `UsingNamespaceDecl` represents `using namespace Game::Utils;` directives. It is a separate `Item` variant (`Item::UsingNamespace`), not part of `NamespaceDecl`. The `path` field specifies the namespace to import.
 - The `Scope` type (from `node.rs`) is used for namespace-qualified references in type expressions (e.g., `Game::Player`), with `is_absolute: true` for `::global` scope access.
-- The documentation's "using namespace" concept is not explicitly covered in the prose sections above but is fully represented in the AST.
+- The `using namespace` directive adds the target namespace to the symbol search path but does not create any new entities or modify the namespace structure itself. It's purely a name resolution directive processed during semantic analysis.
 
 ## Related Features
 
