@@ -100,6 +100,33 @@ class Callback
 }
 ```
 
+### Foreach Iterator Operators
+```angelscript
+class Container
+{
+    // Initialize iteration: returns iterator (int or custom type)
+    int opForBegin() const { return 0; }
+
+    // Check termination: returns true when iterator should stop
+    bool opForEnd(int iterator) const { return iterator >= size; }
+
+    // Advance iterator: returns updated iterator
+    int opForNext(int iterator) const { return iterator + 1; }
+
+    // Retrieve value(s): opForValue for single value
+    ElementType@ opForValue(int iterator) { return elements[iterator]; }
+
+    // For multiple iteration variables: opForValue0, opForValue1, etc.
+    KeyType opForValue0(int iterator) const { return keys[iterator]; }
+    ValType@ opForValue1(int iterator) { return values[iterator]; }
+
+    private ElementType@[] elements;
+    private KeyType[] keys;
+    private ValType@[] values;
+    private int size;
+}
+```
+
 ### Type Conversion Operators
 ```angelscript
 class MyClass
@@ -162,6 +189,7 @@ class MyClass
 | Binary | `>>>` | `opUShr` / `opUShr_r` |
 | Index | `[]` | `opIndex` or `get_opIndex`/`set_opIndex` |
 | Functor | `()` | `opCall` |
+| Foreach | `foreach(var : container)` | `opForBegin`, `opForEnd`, `opForNext`, `opForValue` / `opForValue0`, `opForValue1`, ... |
 | Conversion | `type(expr)` | constructor, `opConv`, `opImplConv` |
 | Conversion | `cast<type>(expr)` | `opCast`, `opImplCast` |
 
@@ -184,6 +212,32 @@ class MyClass
 **Index operator:** `a[i]` is rewritten as `a.opIndex(i)`. If using property accessor form, reads become `a.get_opIndex(i)` and writes become `a.set_opIndex(i, val)`. Multiple index arguments are supported.
 
 **Functor operator:** `expr(args)` is rewritten as `expr.opCall(args)` when `expr` evaluates to an object.
+
+**Foreach operators:** `foreach(var : container)` is rewritten as:
+```angelscript
+for (auto @iterator = container.opForBegin();
+     !container.opForEnd(iterator);
+     iterator = container.opForNext(iterator))
+{
+    auto var = container.opForValue(iterator);
+    // ... loop body
+}
+```
+For multiple iteration variables `foreach(k, v : container)`, the compiler uses `opForValue0` and `opForValue1`:
+```angelscript
+for (auto @iterator = container.opForBegin();
+     !container.opForEnd(iterator);
+     iterator = container.opForNext(iterator))
+{
+    auto k = container.opForValue0(iterator);
+    auto v = container.opForValue1(iterator);
+    // ... loop body
+}
+```
+- `opForBegin()` must return an iterator value (often `int`, but can be a custom type or handle).
+- `opForEnd(iterator)` must return `bool`, indicating termination (returns `true` when done).
+- `opForNext(iterator)` must return the next iterator value (same type as `opForBegin`).
+- `opForValue(iterator)` returns the current element. For multiple variables, use `opForValue0`, `opForValue1`, etc. (one for each iteration variable).
 
 **Type conversion operators:**
 - `type(expr)`: first checks for a conversion constructor on the target type, then tries `expr.opConv()` returning the target type.
@@ -300,6 +354,107 @@ class Celsius
     Fahrenheit opConv() const
     {
         return Fahrenheit(degrees * 9.0f / 5.0f + 32.0f);
+    }
+}
+```
+
+```angelscript
+// Foreach iterator example - simple array-like container
+class IntList
+{
+    private int[] data;
+
+    void add(int value) { data.insertLast(value); }
+
+    // Foreach protocol: use integer index as iterator
+    int opForBegin() const
+    {
+        return 0;
+    }
+
+    bool opForEnd(int iterator) const
+    {
+        return iterator >= data.length();
+    }
+
+    int opForNext(int iterator) const
+    {
+        return iterator + 1;
+    }
+
+    int opForValue(int iterator) const
+    {
+        return data[iterator];
+    }
+}
+
+void example()
+{
+    IntList list;
+    list.add(10);
+    list.add(20);
+    list.add(30);
+
+    // Compiler rewrites this into opForBegin/opForEnd/opForNext/opForValue calls
+    foreach(int val : list)
+    {
+        print("Value: " + val);
+    }
+}
+```
+
+```angelscript
+// Foreach iterator example - dictionary-like container with multiple iteration variables
+class StringMap
+{
+    private string[] keys;
+    private int[] values;
+
+    void set(const string &in key, int val)
+    {
+        keys.insertLast(key);
+        values.insertLast(val);
+    }
+
+    // Foreach protocol with multiple iteration variables
+    int opForBegin() const
+    {
+        return 0;
+    }
+
+    bool opForEnd(int iterator) const
+    {
+        return iterator >= keys.length();
+    }
+
+    int opForNext(int iterator) const
+    {
+        return iterator + 1;
+    }
+
+    // Return key via opForValue0
+    string opForValue0(int iterator) const
+    {
+        return keys[iterator];
+    }
+
+    // Return value via opForValue1
+    int opForValue1(int iterator) const
+    {
+        return values[iterator];
+    }
+}
+
+void example()
+{
+    StringMap map;
+    map.set("health", 100);
+    map.set("mana", 50);
+
+    // Compiler rewrites this into opForValue0 and opForValue1 calls
+    foreach(string key, int value : map)
+    {
+        print(key + " = " + value);
     }
 }
 ```
