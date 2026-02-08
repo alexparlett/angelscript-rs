@@ -20,7 +20,7 @@
 //! ```
 
 use crate::native_error::ConversionError;
-use crate::native_fn::Dynamic;
+use crate::runtime::Dynamic;
 
 /// Extract a value from a [`Dynamic`].
 ///

@@ -8,9 +8,8 @@ use thiserror::Error;
 
 use angelscript_core::{
     ClassEntry, ClassMeta, DataType, FuncdefEntry, FuncdefMeta, FunctionDef, FunctionEntry,
-    FunctionMeta, FunctionTraits, InterfaceEntry, InterfaceMeta, MethodSignature, Operator,
-    OperatorBehavior, Param, PropertyEntry, StringFactory, TemplateParamEntry, TypeHash,
-    TypeSource, Visibility,
+    FunctionMeta, FunctionTraits, InterfaceEntry, InterfaceMeta, MethodSignature, Param,
+    PropertyEntry, StringFactory, TemplateParamEntry, TypeHash, TypeSource, Visibility,
 };
 use angelscript_registry::{Module, SymbolRegistry};
 
@@ -556,10 +555,7 @@ impl Context {
                 class_entry.behaviors.template_callback = Some(func_hash);
             }
             Behavior::Operator(op) => {
-                // Convert Operator to OperatorBehavior
-                if let Some(op_behavior) = operator_to_behavior(op) {
-                    class_entry.behaviors.add_operator(op_behavior, func_hash);
-                }
+                class_entry.behaviors.add_operator(*op, func_hash);
             }
             Behavior::GetWeakRefFlag => {
                 class_entry.behaviors.get_weakref_flag = Some(func_hash);
@@ -669,84 +665,6 @@ impl Context {
             .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
 
         Ok(())
-    }
-}
-
-/// Convert an Operator to an OperatorBehavior.
-///
-/// Returns None for operators that aren't mapped to behaviors (e.g., foreach operators).
-fn operator_to_behavior(op: &Operator) -> Option<OperatorBehavior> {
-    match op {
-        // Unary operators
-        Operator::Neg => Some(OperatorBehavior::OpNeg),
-        Operator::Com => Some(OperatorBehavior::OpCom),
-        Operator::PreInc => Some(OperatorBehavior::OpPreInc),
-        Operator::PreDec => Some(OperatorBehavior::OpPreDec),
-        Operator::PostInc => Some(OperatorBehavior::OpPostInc),
-        Operator::PostDec => Some(OperatorBehavior::OpPostDec),
-
-        // Binary operators
-        Operator::Add => Some(OperatorBehavior::OpAdd),
-        Operator::AddR => Some(OperatorBehavior::OpAddR),
-        Operator::Sub => Some(OperatorBehavior::OpSub),
-        Operator::SubR => Some(OperatorBehavior::OpSubR),
-        Operator::Mul => Some(OperatorBehavior::OpMul),
-        Operator::MulR => Some(OperatorBehavior::OpMulR),
-        Operator::Div => Some(OperatorBehavior::OpDiv),
-        Operator::DivR => Some(OperatorBehavior::OpDivR),
-        Operator::Mod => Some(OperatorBehavior::OpMod),
-        Operator::ModR => Some(OperatorBehavior::OpModR),
-        Operator::Pow => Some(OperatorBehavior::OpPow),
-        Operator::PowR => Some(OperatorBehavior::OpPowR),
-        Operator::And => Some(OperatorBehavior::OpAnd),
-        Operator::AndR => Some(OperatorBehavior::OpAndR),
-        Operator::Or => Some(OperatorBehavior::OpOr),
-        Operator::OrR => Some(OperatorBehavior::OpOrR),
-        Operator::Xor => Some(OperatorBehavior::OpXor),
-        Operator::XorR => Some(OperatorBehavior::OpXorR),
-        Operator::Shl => Some(OperatorBehavior::OpShl),
-        Operator::ShlR => Some(OperatorBehavior::OpShlR),
-        Operator::Shr => Some(OperatorBehavior::OpShr),
-        Operator::ShrR => Some(OperatorBehavior::OpShrR),
-        Operator::Ushr => Some(OperatorBehavior::OpUShr),
-        Operator::UshrR => Some(OperatorBehavior::OpUShrR),
-
-        // Comparison operators
-        Operator::Equals => Some(OperatorBehavior::OpEquals),
-        Operator::Cmp => Some(OperatorBehavior::OpCmp),
-
-        // Index operators
-        Operator::Index => Some(OperatorBehavior::OpIndex),
-        Operator::IndexGet => Some(OperatorBehavior::OpIndexGet),
-        Operator::IndexSet => Some(OperatorBehavior::OpIndexSet),
-
-        // Assignment operators
-        Operator::Assign => Some(OperatorBehavior::OpAssign),
-        Operator::AddAssign => Some(OperatorBehavior::OpAddAssign),
-        Operator::SubAssign => Some(OperatorBehavior::OpSubAssign),
-        Operator::MulAssign => Some(OperatorBehavior::OpMulAssign),
-        Operator::DivAssign => Some(OperatorBehavior::OpDivAssign),
-        Operator::ModAssign => Some(OperatorBehavior::OpModAssign),
-        Operator::PowAssign => Some(OperatorBehavior::OpPowAssign),
-        Operator::AndAssign => Some(OperatorBehavior::OpAndAssign),
-        Operator::OrAssign => Some(OperatorBehavior::OpOrAssign),
-        Operator::XorAssign => Some(OperatorBehavior::OpXorAssign),
-        Operator::ShlAssign => Some(OperatorBehavior::OpShlAssign),
-        Operator::ShrAssign => Some(OperatorBehavior::OpShrAssign),
-        Operator::UshrAssign => Some(OperatorBehavior::OpUShrAssign),
-
-        // Function call operator
-        Operator::Call => Some(OperatorBehavior::OpCall),
-
-        // Foreach operators - not yet mapped to OperatorBehavior
-        Operator::ForBegin
-        | Operator::ForEnd
-        | Operator::ForNext
-        | Operator::ForValue
-        | Operator::ForValueN(_) => None,
-
-        // Conversion operators - need target type info, not yet supported
-        Operator::Conv | Operator::ImplConv | Operator::Cast | Operator::ImplCast => None,
     }
 }
 

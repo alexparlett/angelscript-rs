@@ -20,7 +20,7 @@
 
 use crate::TypeHash;
 use crate::meta::ListPatternMeta;
-use crate::native_fn::Dynamic;
+use crate::runtime::Dynamic;
 
 /// Buffer containing initialization list data.
 ///

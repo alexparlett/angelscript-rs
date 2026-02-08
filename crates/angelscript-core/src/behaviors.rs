@@ -7,7 +7,9 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::{ListPattern, OperatorBehavior, ReferenceKind, RegistrationError, TypeHash, TypeKind};
+use crate::{
+    ConversionEntry, ListPattern, Operator, ReferenceKind, RegistrationError, TypeHash, TypeKind,
+};
 
 /// Result of behavior validation for a type.
 ///
@@ -154,9 +156,14 @@ pub struct TypeBehaviors {
 
     // === Operators ===
     /// Operator overloads for this type.
-    /// Maps operator behavior to function hashes (multiple overloads per operator).
+    /// Maps operator to function hashes (multiple overloads per operator).
     /// The actual functions are stored in the registry's `functions` map.
-    pub operators: FxHashMap<OperatorBehavior, Vec<TypeHash>>,
+    pub operators: FxHashMap<Operator, Vec<TypeHash>>,
+
+    /// Conversion operator overloads for this type.
+    /// Conversion operators need a target type alongside the function hash,
+    /// so they are stored separately from the regular operators map.
+    pub conversions: Vec<ConversionEntry>,
 }
 
 impl TypeBehaviors {
@@ -177,6 +184,7 @@ impl TypeBehaviors {
             && self.get_weakref_flag.is_none()
             && self.template_callback.is_none()
             && self.operators.is_empty()
+            && self.conversions.is_empty()
     }
 
     /// Check if this type has any constructors.
@@ -299,29 +307,39 @@ impl TypeBehaviors {
 
     // === Operator Methods ===
 
-    /// Check if this type has any operators defined.
+    /// Check if this type has any operators defined (including conversions).
     pub fn has_operators(&self) -> bool {
-        !self.operators.is_empty()
+        !self.operators.is_empty() || !self.conversions.is_empty()
     }
 
     /// Check if this type has a specific operator.
-    pub fn has_operator(&self, op: OperatorBehavior) -> bool {
+    pub fn has_operator(&self, op: Operator) -> bool {
         self.operators.contains_key(&op)
     }
 
     /// Add an operator overload for this type.
-    pub fn add_operator(&mut self, op: OperatorBehavior, func_hash: TypeHash) {
+    pub fn add_operator(&mut self, op: Operator, func_hash: TypeHash) {
         self.operators.entry(op).or_default().push(func_hash);
     }
 
     /// Get all overloads for a specific operator.
-    pub fn get_operator(&self, op: OperatorBehavior) -> Option<&[TypeHash]> {
+    pub fn get_operator(&self, op: Operator) -> Option<&[TypeHash]> {
         self.operators.get(&op).map(|v| v.as_slice())
     }
 
     /// Get all operators defined for this type.
-    pub fn operators(&self) -> impl Iterator<Item = (&OperatorBehavior, &Vec<TypeHash>)> {
+    pub fn operators(&self) -> impl Iterator<Item = (&Operator, &Vec<TypeHash>)> {
         self.operators.iter()
+    }
+
+    /// Add a conversion operator overload for this type.
+    pub fn add_conversion(&mut self, entry: ConversionEntry) {
+        self.conversions.push(entry);
+    }
+
+    /// Get all conversion entries for this type.
+    pub fn conversions(&self) -> &[ConversionEntry] {
+        &self.conversions
     }
 
     // === Validation Methods ===
@@ -630,14 +648,14 @@ mod tests {
         let op_add = TypeHash::from_name("MyClass::opAdd");
         let op_add_r = TypeHash::from_name("MyClass::opAdd_r");
 
-        behaviors.add_operator(OperatorBehavior::OpAdd, op_add);
-        behaviors.add_operator(OperatorBehavior::OpAddR, op_add_r);
+        behaviors.add_operator(Operator::Add, op_add);
+        behaviors.add_operator(Operator::AddR, op_add_r);
 
         assert!(!behaviors.is_empty());
         assert!(behaviors.has_operators());
-        assert!(behaviors.has_operator(OperatorBehavior::OpAdd));
-        assert!(behaviors.has_operator(OperatorBehavior::OpAddR));
-        assert!(!behaviors.has_operator(OperatorBehavior::OpSub));
+        assert!(behaviors.has_operator(Operator::Add));
+        assert!(behaviors.has_operator(Operator::AddR));
+        assert!(!behaviors.has_operator(Operator::Sub));
     }
 
     #[test]
@@ -646,10 +664,10 @@ mod tests {
         let op_add_int = TypeHash::from_name("MyClass::opAdd(int)");
         let op_add_float = TypeHash::from_name("MyClass::opAdd(float)");
 
-        behaviors.add_operator(OperatorBehavior::OpAdd, op_add_int);
-        behaviors.add_operator(OperatorBehavior::OpAdd, op_add_float);
+        behaviors.add_operator(Operator::Add, op_add_int);
+        behaviors.add_operator(Operator::Add, op_add_float);
 
-        let overloads = behaviors.get_operator(OperatorBehavior::OpAdd).unwrap();
+        let overloads = behaviors.get_operator(Operator::Add).unwrap();
         assert_eq!(overloads.len(), 2);
         assert_eq!(overloads[0], op_add_int);
         assert_eq!(overloads[1], op_add_float);
@@ -658,14 +676,14 @@ mod tests {
     #[test]
     fn get_nonexistent_operator() {
         let behaviors = TypeBehaviors::new();
-        assert!(behaviors.get_operator(OperatorBehavior::OpAdd).is_none());
+        assert!(behaviors.get_operator(Operator::Add).is_none());
     }
 
     #[test]
     fn operators_iterator() {
         let mut behaviors = TypeBehaviors::new();
-        behaviors.add_operator(OperatorBehavior::OpAdd, TypeHash::from_name("add"));
-        behaviors.add_operator(OperatorBehavior::OpSub, TypeHash::from_name("sub"));
+        behaviors.add_operator(Operator::Add, TypeHash::from_name("add"));
+        behaviors.add_operator(Operator::Sub, TypeHash::from_name("sub"));
 
         let ops: Vec<_> = behaviors.operators().collect();
         assert_eq!(ops.len(), 2);
@@ -676,8 +694,48 @@ mod tests {
         let mut behaviors = TypeBehaviors::new();
         assert!(behaviors.is_empty());
 
-        behaviors.add_operator(OperatorBehavior::OpNeg, TypeHash::from_name("neg"));
+        behaviors.add_operator(Operator::Neg, TypeHash::from_name("neg"));
         assert!(!behaviors.is_empty());
+    }
+
+    #[test]
+    fn conversions_affects_is_empty() {
+        let mut behaviors = TypeBehaviors::new();
+        assert!(behaviors.is_empty());
+
+        behaviors.add_conversion(ConversionEntry {
+            op: Operator::Conv,
+            target_type: TypeHash::from_name("int"),
+            func_hash: TypeHash::from_name("opConv_int"),
+        });
+        assert!(!behaviors.is_empty());
+        assert!(behaviors.has_operators());
+    }
+
+    #[test]
+    fn add_conversions() {
+        let mut behaviors = TypeBehaviors::new();
+        let target_int = TypeHash::from_name("int");
+        let target_float = TypeHash::from_name("float");
+        let func1 = TypeHash::from_name("opConv_int");
+        let func2 = TypeHash::from_name("opImplConv_float");
+
+        behaviors.add_conversion(ConversionEntry {
+            op: Operator::Conv,
+            target_type: target_int,
+            func_hash: func1,
+        });
+        behaviors.add_conversion(ConversionEntry {
+            op: Operator::ImplConv,
+            target_type: target_float,
+            func_hash: func2,
+        });
+
+        assert_eq!(behaviors.conversions().len(), 2);
+        assert_eq!(behaviors.conversions()[0].op, Operator::Conv);
+        assert_eq!(behaviors.conversions()[0].target_type, target_int);
+        assert_eq!(behaviors.conversions()[0].func_hash, func1);
+        assert_eq!(behaviors.conversions()[1].op, Operator::ImplConv);
     }
 
     // =========================================================================

@@ -1,7 +1,8 @@
-//! Operator enum for proc-macro attributes.
+//! Operator enum for proc-macro attributes and behavior registration.
 //!
 //! This module provides the `Operator` enum used in `#[angelscript::function]`
-//! attributes to specify which operator a method implements.
+//! attributes to specify which operator a method implements, and `ConversionEntry`
+//! for storing conversion operator registrations in `TypeBehaviors`.
 //!
 //! # Example
 //!
@@ -9,9 +10,6 @@
 //! #[angelscript::function(instance, operator = Operator::Add)]
 //! pub fn add(&self, other: &MyClass) -> MyClass { ... }
 //! ```
-//!
-//! Note: This is distinct from `OperatorBehavior` in `type_def.rs`, which
-//! includes target types for conversion operators and is used in the registry.
 
 use std::fmt;
 
@@ -153,7 +151,112 @@ pub enum Operator {
     ImplCast,
 }
 
+/// A conversion operator entry stored in `TypeBehaviors`.
+///
+/// Conversion operators need both a target type and a function hash, unlike
+/// regular operators which are keyed by `Operator` alone. This struct bundles
+/// all three pieces together for flat storage in a `Vec<ConversionEntry>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConversionEntry {
+    /// The conversion operator kind (Conv, ImplConv, Cast, or ImplCast).
+    pub op: Operator,
+    /// The target type this conversion produces.
+    pub target_type: crate::TypeHash,
+    /// The implementing function.
+    pub func_hash: crate::TypeHash,
+}
+
 impl Operator {
+    /// Parse an AngelScript method name to determine the operator.
+    ///
+    /// Returns `None` for unrecognized method names.
+    pub fn from_method_name(name: &str) -> Option<Self> {
+        match name {
+            // Conversion operators
+            "opConv" => Some(Operator::Conv),
+            "opImplConv" => Some(Operator::ImplConv),
+            "opCast" => Some(Operator::Cast),
+            "opImplCast" => Some(Operator::ImplCast),
+
+            // Unary operators (prefix)
+            "opNeg" => Some(Operator::Neg),
+            "opCom" => Some(Operator::Com),
+            "opPreInc" => Some(Operator::PreInc),
+            "opPreDec" => Some(Operator::PreDec),
+
+            // Unary operators (postfix)
+            "opPostInc" => Some(Operator::PostInc),
+            "opPostDec" => Some(Operator::PostDec),
+
+            // Binary operators
+            "opAdd" => Some(Operator::Add),
+            "opAdd_r" => Some(Operator::AddR),
+            "opSub" => Some(Operator::Sub),
+            "opSub_r" => Some(Operator::SubR),
+            "opMul" => Some(Operator::Mul),
+            "opMul_r" => Some(Operator::MulR),
+            "opDiv" => Some(Operator::Div),
+            "opDiv_r" => Some(Operator::DivR),
+            "opMod" => Some(Operator::Mod),
+            "opMod_r" => Some(Operator::ModR),
+            "opPow" => Some(Operator::Pow),
+            "opPow_r" => Some(Operator::PowR),
+
+            // Bitwise operators
+            "opAnd" => Some(Operator::And),
+            "opAnd_r" => Some(Operator::AndR),
+            "opOr" => Some(Operator::Or),
+            "opOr_r" => Some(Operator::OrR),
+            "opXor" => Some(Operator::Xor),
+            "opXor_r" => Some(Operator::XorR),
+            "opShl" => Some(Operator::Shl),
+            "opShl_r" => Some(Operator::ShlR),
+            "opShr" => Some(Operator::Shr),
+            "opShr_r" => Some(Operator::ShrR),
+            "opUShr" => Some(Operator::Ushr),
+            "opUShr_r" => Some(Operator::UshrR),
+
+            // Comparison operators
+            "opEquals" => Some(Operator::Equals),
+            "opCmp" => Some(Operator::Cmp),
+
+            // Assignment operators
+            "opAssign" => Some(Operator::Assign),
+            "opAddAssign" => Some(Operator::AddAssign),
+            "opSubAssign" => Some(Operator::SubAssign),
+            "opMulAssign" => Some(Operator::MulAssign),
+            "opDivAssign" => Some(Operator::DivAssign),
+            "opModAssign" => Some(Operator::ModAssign),
+            "opPowAssign" => Some(Operator::PowAssign),
+            "opAndAssign" => Some(Operator::AndAssign),
+            "opOrAssign" => Some(Operator::OrAssign),
+            "opXorAssign" => Some(Operator::XorAssign),
+            "opShlAssign" => Some(Operator::ShlAssign),
+            "opShrAssign" => Some(Operator::ShrAssign),
+            "opUShrAssign" => Some(Operator::UshrAssign),
+
+            // Index and call operators
+            "opIndex" => Some(Operator::Index),
+            "get_opIndex" => Some(Operator::IndexGet),
+            "set_opIndex" => Some(Operator::IndexSet),
+            "opCall" => Some(Operator::Call),
+
+            // Foreach operators
+            "opForBegin" => Some(Operator::ForBegin),
+            "opForEnd" => Some(Operator::ForEnd),
+            "opForNext" => Some(Operator::ForNext),
+            "opForValue" => Some(Operator::ForValue),
+
+            // Dynamic opForValue{N} - parse the index
+            _ if name.starts_with("opForValue") => {
+                let suffix = &name[10..]; // "opForValue".len() == 10
+                suffix.parse::<u8>().ok().map(Operator::ForValueN)
+            }
+
+            _ => None,
+        }
+    }
+
     /// Get the AngelScript method name for this operator.
     pub const fn method_name(&self) -> &'static str {
         match self {
