@@ -171,26 +171,18 @@ The parser uses recursive descent to produce a typed AST. Key components:
 - **AST**: Declarations (classes, functions), statements (if, while, for), expressions
 - **Parser**: Single-pass recursive descent, produces `Vec<Decl>`
 
-## Compiler
-
-Two-pass compilation:
-
-**Pass 1 - Registration**: Collects all type and function declarations without resolving bodies. Registers script classes, interfaces, enums, funcdefs. Builds inheritance chains and validates template instantiations.
-
-**Pass 2 - Compilation**: Resolves types, performs semantic analysis, generates bytecode. Handles type checking, overload resolution, implicit conversions, and control flow analysis.
-
 ## Runtime Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Engine (Arc<Engine>)                       │
+│                      Context (Arc<Context>)                       │
 │  Immutable after setup, shared across threads                   │
 │  Contains: SymbolRegistry, CompiledModules                      │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Runtime<'engine>                           │
+│                      Unit<'engine>                           │
 │  Mutable, one per "world"                                       │
 │  Contains: Object Pool, Globals, Callbacks                      │
 └─────────────────────────────────────────────────────────────────┘
