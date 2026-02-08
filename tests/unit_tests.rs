@@ -32,6 +32,7 @@ fn build_script(filename: &str) -> Unit {
 // =============================================================================
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_hello_world() {
     let module = build_script("hello_world.as");
     assert!(module.is_built());
@@ -40,6 +41,7 @@ fn test_hello_world() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_literals() {
     let module = build_script("literals.as");
     assert!(module.is_built());
@@ -52,6 +54,7 @@ fn test_literals() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_operators() {
     let module = build_script("operators.as");
     assert!(module.is_built());
@@ -64,6 +67,7 @@ fn test_operators() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_control_flow() {
     let module = build_script("control_flow.as");
     assert!(module.is_built());
@@ -72,6 +76,7 @@ fn test_control_flow() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_functions() {
     let module = build_script("functions.as");
     assert!(module.is_built());
@@ -83,6 +88,7 @@ fn test_functions() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_types() {
     let module = build_script("types.as");
     assert!(module.is_built());
@@ -94,6 +100,7 @@ fn test_types() {
 // =============================================================================
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_class_basic() {
     let module = build_script("class_basic.as");
     assert!(module.is_built());
@@ -102,6 +109,7 @@ fn test_class_basic() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_inheritance() {
     let module = build_script("inheritance.as");
     assert!(module.is_built());
@@ -118,6 +126,7 @@ fn test_interface() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_properties() {
     let module = build_script("properties.as");
     assert!(module.is_built());
@@ -125,6 +134,7 @@ fn test_properties() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_enum() {
     let module = build_script("enum.as");
     assert!(module.is_built());
@@ -136,6 +146,7 @@ fn test_enum() {
 // =============================================================================
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_nested() {
     let module = build_script("nested.as");
     assert!(module.is_built());
@@ -143,6 +154,7 @@ fn test_nested() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_using_namespace() {
     let module = build_script("using_namespace.as");
     assert!(module.is_built());
@@ -154,6 +166,7 @@ fn test_using_namespace() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_expressions() {
     let module = build_script("expressions.as");
     assert!(module.is_built());
@@ -162,6 +175,7 @@ fn test_expressions() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_templates() {
     let module = build_script("templates.as");
     assert!(module.is_built());
@@ -169,6 +183,7 @@ fn test_templates() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_lambdas() {
     let module = build_script("lambdas.as");
     assert!(module.is_built());
@@ -181,6 +196,7 @@ fn test_lambdas() {
 // =============================================================================
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_game_logic() {
     let module = build_script("game_logic.as");
     assert!(module.is_built());
@@ -192,6 +208,7 @@ fn test_game_logic() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_utilities() {
     let module = build_script("utilities.as");
     assert!(module.is_built());
@@ -203,6 +220,7 @@ fn test_utilities() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_data_structures() {
     let module = build_script("data_structures.as");
     assert!(module.is_built());
@@ -215,6 +233,7 @@ fn test_data_structures() {
 // =============================================================================
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_large_function() {
     let module = build_script("large_function.as");
     assert!(module.is_built());
@@ -223,6 +242,7 @@ fn test_large_function() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_many_functions() {
     let module = build_script("many_functions.as");
     assert!(module.is_built());
@@ -231,6 +251,7 @@ fn test_many_functions() {
 }
 
 #[test]
+#[ignore = "compiler removed"]
 fn test_performance_large_500() {
     let module = build_script("performance/large_500.as");
     assert!(module.is_built());

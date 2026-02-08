@@ -31,7 +31,7 @@
 use std::cell::OnceCell;
 use std::fmt;
 
-use crate::type_def::Visibility;
+use crate::types::Visibility;
 use crate::{DataType, TypeHash};
 
 /// Function parameter with name, type, and optional default value marker.
