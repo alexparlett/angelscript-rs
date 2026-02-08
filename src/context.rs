@@ -466,7 +466,13 @@ impl Context {
 
         // Wire behavior to the type's behaviors if this function has an associated behavior
         if let (Some(type_hash), Some(behavior)) = (object_type, &meta.behavior) {
-            self.wire_behavior(type_hash, func_hash, behavior, meta.list_pattern.as_ref())?;
+            self.wire_behavior(
+                type_hash,
+                func_hash,
+                behavior,
+                meta.list_pattern.as_ref(),
+                meta.return_meta.type_hash,
+            )?;
         }
 
         Ok(())
@@ -479,8 +485,9 @@ impl Context {
         func_hash: TypeHash,
         behavior: &angelscript_core::Behavior,
         list_pattern: Option<&angelscript_core::meta::ListPatternMeta>,
+        return_type: Option<TypeHash>,
     ) -> Result<(), ContextError> {
-        use angelscript_core::{Behavior, ListBehavior, ListPattern};
+        use angelscript_core::{Behavior, ConversionEntry, ListBehavior, ListPattern};
 
         // Get the type entry and modify its behaviors
         let type_entry = self.registry.get_mut(type_hash).ok_or_else(|| {
@@ -553,6 +560,19 @@ impl Context {
             }
             Behavior::TemplateCallback => {
                 class_entry.behaviors.template_callback = Some(func_hash);
+            }
+            Behavior::Operator(op) if op.is_conversion() => {
+                let target_type = return_type.ok_or_else(|| {
+                    ContextError::RegistrationFailed(format!(
+                        "conversion operator {:?} requires a return type for function {:?}",
+                        op, func_hash
+                    ))
+                })?;
+                class_entry.behaviors.add_conversion(ConversionEntry {
+                    op: *op,
+                    target_type,
+                    func_hash,
+                });
             }
             Behavior::Operator(op) => {
                 class_entry.behaviors.add_operator(*op, func_hash);
@@ -1178,6 +1198,225 @@ mod tests {
             func.def.is_variadic,
             "function should be marked as variadic"
         );
+    }
+
+    #[test]
+    fn context_wire_conversion_operator() {
+        use angelscript_core::{Behavior, Operator, ReturnMeta};
+
+        let mut ctx = Context::new();
+
+        let type_hash = TypeHash::from_name("MyClass");
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "MyClass",
+            type_hash,
+            type_kind: TypeKind::reference(),
+            rust_type_id: None,
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        // opConv that returns int32
+        module.functions.push(FunctionMeta {
+            name: "opConv",
+            as_name: None,
+            native_fn: None,
+            params: vec![],
+            generic_params: vec![],
+            return_meta: ReturnMeta {
+                type_hash: Some(primitives::INT32),
+                ..Default::default()
+            },
+            is_method: true,
+            associated_type: Some(type_hash),
+            behavior: Some(Behavior::Operator(Operator::Conv)),
+            is_const: true,
+            is_property: false,
+            property_name: None,
+            is_generic: false,
+            list_pattern: None,
+            template_params: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(type_hash).unwrap();
+        let class = entry.as_class().unwrap();
+        let conversions = class.behaviors.conversions();
+        assert_eq!(conversions.len(), 1);
+        assert_eq!(conversions[0].op, Operator::Conv);
+        assert_eq!(conversions[0].target_type, primitives::INT32);
+    }
+
+    #[test]
+    fn context_wire_implicit_cast_operator() {
+        use angelscript_core::{Behavior, Operator, ReturnMeta};
+
+        let mut ctx = Context::new();
+
+        let type_hash = TypeHash::from_name("Wrapper");
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "Wrapper",
+            type_hash,
+            type_kind: TypeKind::reference(),
+            rust_type_id: None,
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        module.functions.push(FunctionMeta {
+            name: "opImplCast",
+            as_name: None,
+            native_fn: None,
+            params: vec![],
+            generic_params: vec![],
+            return_meta: ReturnMeta {
+                type_hash: Some(primitives::FLOAT),
+                ..Default::default()
+            },
+            is_method: true,
+            associated_type: Some(type_hash),
+            behavior: Some(Behavior::Operator(Operator::ImplCast)),
+            is_const: true,
+            is_property: false,
+            property_name: None,
+            is_generic: false,
+            list_pattern: None,
+            template_params: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(type_hash).unwrap();
+        let class = entry.as_class().unwrap();
+        let conversions = class.behaviors.conversions();
+        assert_eq!(conversions.len(), 1);
+        assert_eq!(conversions[0].op, Operator::ImplCast);
+        assert_eq!(conversions[0].target_type, primitives::FLOAT);
+    }
+
+    #[test]
+    fn context_wire_regular_operator_not_in_conversions() {
+        use angelscript_core::{Behavior, Operator, ReturnMeta};
+
+        let mut ctx = Context::new();
+
+        let type_hash = TypeHash::from_name("Vec2");
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "Vec2",
+            type_hash,
+            type_kind: TypeKind::value::<f32>(),
+            rust_type_id: None,
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        module.functions.push(FunctionMeta {
+            name: "opAdd",
+            as_name: None,
+            native_fn: None,
+            params: vec![],
+            generic_params: vec![],
+            return_meta: ReturnMeta {
+                type_hash: Some(type_hash),
+                ..Default::default()
+            },
+            is_method: true,
+            associated_type: Some(type_hash),
+            behavior: Some(Behavior::Operator(Operator::Add)),
+            is_const: true,
+            is_property: false,
+            property_name: None,
+            is_generic: false,
+            list_pattern: None,
+            template_params: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(type_hash).unwrap();
+        let class = entry.as_class().unwrap();
+        // Regular operator goes to operators map, not conversions
+        assert!(class.behaviors.conversions().is_empty());
+        assert!(class.behaviors.has_operators());
+        let ops = class.behaviors.get_operator(Operator::Add);
+        assert!(ops.is_some());
+        assert_eq!(ops.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn context_wire_multiple_conversions() {
+        use angelscript_core::{Behavior, Operator, ReturnMeta};
+
+        let mut ctx = Context::new();
+
+        let type_hash = TypeHash::from_name("Multi");
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "Multi",
+            type_hash,
+            type_kind: TypeKind::reference(),
+            rust_type_id: None,
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        // opConv -> int32
+        module.functions.push(FunctionMeta {
+            name: "opConv",
+            as_name: Some("opConv_int"),
+            native_fn: None,
+            params: vec![],
+            generic_params: vec![],
+            return_meta: ReturnMeta {
+                type_hash: Some(primitives::INT32),
+                ..Default::default()
+            },
+            is_method: true,
+            associated_type: Some(type_hash),
+            behavior: Some(Behavior::Operator(Operator::Conv)),
+            is_const: true,
+            is_property: false,
+            property_name: None,
+            is_generic: false,
+            list_pattern: None,
+            template_params: vec![],
+        });
+        // opImplConv -> float
+        module.functions.push(FunctionMeta {
+            name: "opImplConv",
+            as_name: Some("opImplConv_float"),
+            native_fn: None,
+            params: vec![],
+            generic_params: vec![],
+            return_meta: ReturnMeta {
+                type_hash: Some(primitives::FLOAT),
+                ..Default::default()
+            },
+            is_method: true,
+            associated_type: Some(type_hash),
+            behavior: Some(Behavior::Operator(Operator::ImplConv)),
+            is_const: true,
+            is_property: false,
+            property_name: None,
+            is_generic: false,
+            list_pattern: None,
+            template_params: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(type_hash).unwrap();
+        let class = entry.as_class().unwrap();
+        let conversions = class.behaviors.conversions();
+        assert_eq!(conversions.len(), 2);
+        assert_eq!(conversions[0].op, Operator::Conv);
+        assert_eq!(conversions[0].target_type, primitives::INT32);
+        assert_eq!(conversions[1].op, Operator::ImplConv);
+        assert_eq!(conversions[1].target_type, primitives::FLOAT);
     }
 
     #[test]
