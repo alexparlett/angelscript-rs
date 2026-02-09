@@ -1,5 +1,5 @@
 [package]
-name = "angelscript-parser"
+name = "angelscript"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,3 +7,7 @@ license.workspace = true
 [dependencies]
 angelscript-core.workspace = true
 angelscript-lexer.workspace = true
+angelscript-parser.workspace = true
+angelscript-compiler.workspace = true
+angelscript-vm.workspace = true
+angelscript-macros.workspace = true

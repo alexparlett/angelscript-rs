@@ -1,10 +1,9 @@
 [package]
 name = "angelscript-compiler"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
-angelscript-core = { path = "../angelscript-core" }
-angelscript-registry = { path = "../angelscript-registry" }
-angelscript-parser = { path = "../angelscript-parser" }
-rustc-hash.workspace = true
+angelscript-core.workspace = true
+angelscript-parser.workspace = true

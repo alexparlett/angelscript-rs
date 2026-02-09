@@ -1,72 +1,25 @@
 [workspace]
+resolver = "2"
 members = [
+    "crates/angelscript",
     "crates/angelscript-core",
+    "crates/angelscript-lexer",
     "crates/angelscript-parser",
-    "crates/angelscript-registry",
     "crates/angelscript-compiler",
+    "crates/angelscript-vm",
     "crates/angelscript-macros",
-    "crates/angelscript-modules",
-    ".",
 ]
-resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
 
 [workspace.dependencies]
+angelscript = { path = "crates/angelscript" }
 angelscript-core = { path = "crates/angelscript-core" }
-thiserror = "2.0"
-bitflags = "2.10"
-num_enum = "0.7"
-bumpalo = { version = "3.16", features = ["collections"] }
-rustc-hash = "2.0"
-ordered-float = "4.0"
-profiling = { version = "1.0" }
-xxhash-rust = { version = "0.8", features = ["xxh64"] }
-criterion = "0.7"
-puffin = "0.19"
-
-[package]
-name = "angelscript"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-angelscript-core.workspace = true
-angelscript-compiler = { path = "crates/angelscript-compiler" }
+angelscript-lexer = { path = "crates/angelscript-lexer" }
 angelscript-parser = { path = "crates/angelscript-parser" }
-angelscript-registry = { path = "crates/angelscript-registry" }
+angelscript-compiler = { path = "crates/angelscript-compiler" }
+angelscript-vm = { path = "crates/angelscript-vm" }
 angelscript-macros = { path = "crates/angelscript-macros" }
-angelscript-modules = { path = "crates/angelscript-modules" }
-thiserror.workspace = true
-bitflags.workspace = true
-num_enum.workspace = true
-bumpalo.workspace = true
-rustc-hash.workspace = true
-ordered-float.workspace = true
-profiling = { workspace = true, optional = true }
-xxhash-rust.workspace = true
-
-[dev-dependencies]
-criterion.workspace = true
-puffin.workspace = true
-trybuild = "1.0"
-cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "run-cargo-fmt"] }
-
-[features]
-default = []
-profiling = ["dep:profiling"]
-profile-with-puffin = ["profiling", "profiling/profile-with-puffin"]
-
-[package.metadata.docs.rs]
-all-features = true
-no-deps = true
-
-[[test]]
-name = "unit"
-path = "tests/unit_tests.rs"
-
-[[bench]]
-name = "module_benchmarks"
-harness = false
-
-# [[bench]]
-# name = "semantic_benchmarks"
-# harness = false
