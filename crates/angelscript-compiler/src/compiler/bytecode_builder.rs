@@ -185,9 +185,10 @@ fn encode_instruction(inst: &Instruction, buf: &mut Vec<u32>) {
     let size = inst.op.size_dwords();
     match size {
         1 => {
-            // Pack: opcode in low byte, word args in upper bytes.
+            // Pack: opcode in bits 0-7, w_arg0 in bits 8-15, w_arg1 in bits 16-31.
+            // w_arg0 is truncated to 8 bits (sufficient for stack offsets < 256).
             let word = (inst.op as u32)
-                | ((inst.w_arg0 as u16 as u32) << 8)
+                | (((inst.w_arg0 as u8) as u32) << 8)
                 | ((inst.w_arg1 as u16 as u32) << 16);
             buf.push(word);
         }
