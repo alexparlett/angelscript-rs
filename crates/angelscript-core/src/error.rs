@@ -19,6 +19,22 @@ impl SourceLocation {
             column,
         }
     }
+
+    /// Create from a byte offset into source code.
+    pub fn from_offset(source: &str, offset: usize) -> Self {
+        let offset = offset.min(source.len());
+        let before = &source[..offset];
+        let line = before.chars().filter(|&c| c == '\n').count() as u32 + 1;
+        let column = before
+            .rfind('\n')
+            .map(|nl| offset - nl)
+            .unwrap_or(offset + 1) as u32;
+        SourceLocation {
+            file: String::new(),
+            line,
+            column,
+        }
+    }
 }
 
 impl fmt::Display for SourceLocation {
