@@ -706,7 +706,7 @@ fn scoped_to_qualified(id: &ast::ScopedIdentifier, current_ns: &[String]) -> Qua
 /// Convert an AST `TypeExpr` to a core `DataType`.
 /// During registration, named types are resolved to `TypeKind::Object` with a
 /// `TypeId` computed from the qualified name. Full resolution happens in completion.
-fn resolve_type_expr_to_data_type(te: &ast::TypeExpr) -> DataType {
+pub fn resolve_type_expr_to_data_type(te: &ast::TypeExpr) -> DataType {
     let mut dt = match &te.kind {
         ast::TypeExprKind::Primitive(p) => {
             let prim = ast_prim_to_core_prim(p);
