@@ -631,6 +631,18 @@ impl Instruction {
             qw_arg: qw,
         }
     }
+
+    /// Create an instruction with a word + qword argument.
+    pub fn with_w_qw(op: OpCode, w0: i16, qw: u64) -> Self {
+        Instruction {
+            op,
+            w_arg0: w0,
+            w_arg1: 0,
+            w_arg2: 0,
+            dw_arg: 0,
+            qw_arg: qw,
+        }
+    }
 }
 
 /// Final compiled bytecode buffer.

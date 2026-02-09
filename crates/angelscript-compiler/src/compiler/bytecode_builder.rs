@@ -83,6 +83,11 @@ impl BytecodeBuilder {
         self.emit(Instruction::with_qw(op, qw));
     }
 
+    /// Emit a word + qword-argument instruction.
+    pub fn emit_w_qw(&mut self, op: OpCode, w0: i16, qw: u64) {
+        self.emit(Instruction::with_w_qw(op, w0, qw));
+    }
+
     /// Emit a jump instruction targeting a label.
     /// The label offset will be resolved during finalization.
     pub fn emit_jump(&mut self, op: OpCode, label: Label) {

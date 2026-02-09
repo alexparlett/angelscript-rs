@@ -53,11 +53,9 @@ impl<'a> Compiler<'a> {
         if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
             let dt = DataType::primitive(PrimitiveType::Int32);
             let offset = self.variables.alloc_temp(dt.clone());
-            self.bytecode.emit_dw(OpCode::SetV4, val as i32 as u32);
-            self.bytecode.emit_w(OpCode::CpyRtoV4, offset);
-            // We use SetV4 which sets a variable directly.
-            // Actually, let's use a simpler approach: PshC4 + store.
-            // Rewrite: use SetV4 directly (opcode sets var from dword arg).
+            // SetV4: w_arg0 = variable offset, dw_arg = value
+            self.bytecode
+                .emit_w_dw(OpCode::SetV4, offset, val as i32 as u32);
             ExprResult {
                 data_type: DataType::primitive(PrimitiveType::Int32),
                 is_lvalue: false,
@@ -69,8 +67,8 @@ impl<'a> Compiler<'a> {
         } else {
             let dt = DataType::primitive(PrimitiveType::Int64);
             let offset = self.variables.alloc_temp(dt.clone());
-            self.bytecode.emit_qw(OpCode::SetV8, val as u64);
-            self.bytecode.emit_w(OpCode::CpyRtoV8, offset);
+            // SetV8: w_arg0 = variable offset, qw_arg = value
+            self.bytecode.emit_w_qw(OpCode::SetV8, offset, val as u64);
             ExprResult {
                 data_type: DataType::primitive(PrimitiveType::Int64),
                 is_lvalue: false,
@@ -86,8 +84,8 @@ impl<'a> Compiler<'a> {
         let dt = DataType::primitive(PrimitiveType::Float);
         let offset = self.variables.alloc_temp(dt.clone());
         let bits = (val as f32).to_bits();
-        self.bytecode.emit_dw(OpCode::SetV4, bits);
-        self.bytecode.emit_w(OpCode::CpyRtoV4, offset);
+        // SetV4: w_arg0 = variable offset, dw_arg = value
+        self.bytecode.emit_w_dw(OpCode::SetV4, offset, bits);
         ExprResult {
             data_type: DataType::primitive(PrimitiveType::Float),
             is_lvalue: false,
@@ -102,8 +100,8 @@ impl<'a> Compiler<'a> {
         let dt = DataType::primitive(PrimitiveType::Double);
         let offset = self.variables.alloc_temp(dt.clone());
         let bits = val.to_bits();
-        self.bytecode.emit_qw(OpCode::SetV8, bits);
-        self.bytecode.emit_w(OpCode::CpyRtoV8, offset);
+        // SetV8: w_arg0 = variable offset, qw_arg = value
+        self.bytecode.emit_w_qw(OpCode::SetV8, offset, bits);
         ExprResult {
             data_type: DataType::primitive(PrimitiveType::Double),
             is_lvalue: false,
@@ -117,9 +115,9 @@ impl<'a> Compiler<'a> {
     fn compile_bool_literal(&mut self, val: bool) -> ExprResult {
         let dt = DataType::primitive(PrimitiveType::Bool);
         let offset = self.variables.alloc_temp(dt.clone());
+        // SetV4: w_arg0 = variable offset, dw_arg = value
         self.bytecode
-            .emit_dw(OpCode::SetV4, if val { 1 } else { 0 });
-        self.bytecode.emit_w(OpCode::CpyRtoV4, offset);
+            .emit_w_dw(OpCode::SetV4, offset, if val { 1 } else { 0 });
         ExprResult {
             data_type: DataType::primitive(PrimitiveType::Bool),
             is_lvalue: false,
@@ -236,6 +234,15 @@ impl<'a> Compiler<'a> {
 
         let result_offset = self.variables.alloc_temp(result_type.clone());
 
+        // Copy the left operand to the result temp first, because arithmetic
+        // ops mutate the destination in-place: OP dst, src → dst = dst OP src.
+        let copy_op = match category {
+            PrimCategory::Int64 | PrimCategory::Double => OpCode::CpyVtoV8,
+            _ => OpCode::CpyVtoV4,
+        };
+        self.bytecode
+            .emit_ww(copy_op, result_offset, left.stack_offset);
+
         match op {
             BinOp::Add => {
                 let opc = Self::arith_op(
@@ -246,8 +253,7 @@ impl<'a> Compiler<'a> {
                     OpCode::ADDi64,
                 );
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::Sub => {
                 let opc = Self::arith_op(
@@ -258,8 +264,7 @@ impl<'a> Compiler<'a> {
                     OpCode::SUBi64,
                 );
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::Mul => {
                 let opc = Self::arith_op(
@@ -270,8 +275,7 @@ impl<'a> Compiler<'a> {
                     OpCode::MULi64,
                 );
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::Div => {
                 let opc = Self::arith_op(
@@ -282,8 +286,7 @@ impl<'a> Compiler<'a> {
                     OpCode::DIVi64,
                 );
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::Mod => {
                 let opc = Self::arith_op(
@@ -294,8 +297,7 @@ impl<'a> Compiler<'a> {
                     OpCode::MODi64,
                 );
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::Pow => {
                 let opc = match category {
@@ -306,8 +308,7 @@ impl<'a> Compiler<'a> {
                     PrimCategory::Void => OpCode::POWi,
                 };
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::BitAnd => {
                 let opc = if category == PrimCategory::Int64 {
@@ -316,8 +317,7 @@ impl<'a> Compiler<'a> {
                     OpCode::BAND
                 };
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::BitOr => {
                 let opc = if category == PrimCategory::Int64 {
@@ -326,8 +326,7 @@ impl<'a> Compiler<'a> {
                     OpCode::BOR
                 };
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::BitXor => {
                 let opc = if category == PrimCategory::Int64 {
@@ -336,8 +335,7 @@ impl<'a> Compiler<'a> {
                     OpCode::BXOR
                 };
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::ShiftLeft => {
                 let opc = if category == PrimCategory::Int64 {
@@ -346,8 +344,7 @@ impl<'a> Compiler<'a> {
                     OpCode::BSLL
                 };
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::ShiftRight => {
                 let opc = if category == PrimCategory::Int64 {
@@ -356,8 +353,7 @@ impl<'a> Compiler<'a> {
                     OpCode::BSRL
                 };
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::ShiftRightArith => {
                 let opc = if category == PrimCategory::Int64 {
@@ -366,14 +362,12 @@ impl<'a> Compiler<'a> {
                     OpCode::BSRA
                 };
                 self.bytecode
-                    .emit_ww(opc, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(opc, result_offset, right.stack_offset);
             }
             BinOp::LogicXor => {
                 // XOR of booleans: (a != 0) ^ (b != 0)
                 self.bytecode
-                    .emit_ww(OpCode::BXOR, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(OpCode::BXOR, result_offset, right.stack_offset);
             }
             // Other operators already handled above.
             _ => {
@@ -449,17 +443,19 @@ impl<'a> Compiler<'a> {
             .variables
             .alloc_temp(DataType::primitive(PrimitiveType::Bool));
 
+        // Copy left to result first (in-place ops modify dst).
+        self.bytecode
+            .emit_ww(OpCode::CpyVtoV4, result_offset, left.stack_offset);
+
         match op {
             BinOp::LogicAnd => {
                 // result = left & right (bitwise works for bools)
                 self.bytecode
-                    .emit_ww(OpCode::BAND, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(OpCode::BAND, result_offset, right.stack_offset);
             }
             BinOp::LogicOr => {
                 self.bytecode
-                    .emit_ww(OpCode::BOR, left.stack_offset, right.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                    .emit_ww(OpCode::BOR, result_offset, right.stack_offset);
             }
             _ => unreachable!(),
         }
@@ -489,9 +485,14 @@ impl<'a> Compiler<'a> {
                     PrimCategory::Void => OpCode::NEGi,
                 };
                 let result_offset = self.variables.alloc_temp(val.data_type.clone());
-                self.bytecode.emit_w(OpCode::CpyVtoR4, val.stack_offset);
-                self.bytecode.emit_ww(neg_op, result_offset, 0);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                // Copy value to result temp, then negate in-place.
+                let copy_op = match category {
+                    PrimCategory::Int64 | PrimCategory::Double => OpCode::CpyVtoV8,
+                    _ => OpCode::CpyVtoV4,
+                };
+                self.bytecode
+                    .emit_ww(copy_op, result_offset, val.stack_offset);
+                self.bytecode.emit_w(neg_op, result_offset);
                 ExprResult {
                     data_type: val.data_type,
                     is_lvalue: false,
@@ -509,7 +510,9 @@ impl<'a> Compiler<'a> {
                 let result_offset = self
                     .variables
                     .alloc_temp(DataType::primitive(PrimitiveType::Bool));
-                self.bytecode.emit_ww(OpCode::NOT, val.stack_offset, 0);
+                // NOT operates on the register, so load value first.
+                self.bytecode.emit_w(OpCode::CpyVtoR4, val.stack_offset);
+                self.bytecode.emit_op(OpCode::NOT);
                 self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
                 ExprResult {
                     data_type: DataType::primitive(PrimitiveType::Bool),
@@ -529,9 +532,15 @@ impl<'a> Compiler<'a> {
                     OpCode::BNOT
                 };
                 let result_offset = self.variables.alloc_temp(val.data_type.clone());
-                self.bytecode.emit_w(OpCode::CpyVtoR4, val.stack_offset);
-                self.bytecode.emit_op(not_op);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, result_offset);
+                // Copy value to result temp, then NOT in-place.
+                let copy_op = if category == PrimCategory::Int64 {
+                    OpCode::CpyVtoV8
+                } else {
+                    OpCode::CpyVtoV4
+                };
+                self.bytecode
+                    .emit_ww(copy_op, result_offset, val.stack_offset);
+                self.bytecode.emit_w(not_op, result_offset);
                 ExprResult {
                     data_type: val.data_type,
                     is_lvalue: false,
@@ -679,9 +688,9 @@ impl<'a> Compiler<'a> {
                     ),
                     _ => unreachable!(),
                 };
+                // Compound assignment: OP modifies lhs in-place.
                 self.bytecode
                     .emit_ww(arith_op, lhs.stack_offset, rhs.stack_offset);
-                self.bytecode.emit_w(OpCode::CpyRtoV4, lhs.stack_offset);
             }
             _ => {
                 self.error(format!("unsupported compound assignment: {:?}", op));

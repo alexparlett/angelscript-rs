@@ -86,12 +86,12 @@ impl<'a> Compiler<'a> {
                 let category = Self::primitive_category(prim);
                 match category {
                     PrimCategory::Int64 | PrimCategory::Double => {
-                        self.bytecode.emit_qw(OpCode::SetV8, 0);
-                        self.bytecode.emit_w(OpCode::CpyRtoV8, offset);
+                        // SetV8: w_arg0 = variable offset, qw_arg = value
+                        self.bytecode.emit_w_qw(OpCode::SetV8, offset, 0);
                     }
                     _ => {
-                        self.bytecode.emit_dw(OpCode::SetV4, 0);
-                        self.bytecode.emit_w(OpCode::CpyRtoV4, offset);
+                        // SetV4: w_arg0 = variable offset, dw_arg = value
+                        self.bytecode.emit_w_dw(OpCode::SetV4, offset, 0);
                     }
                 }
             }
