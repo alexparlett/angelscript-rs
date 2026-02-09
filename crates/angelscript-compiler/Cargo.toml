@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 angelscript-core.workspace = true
 angelscript-parser.workspace = true
+bitflags = "2"
